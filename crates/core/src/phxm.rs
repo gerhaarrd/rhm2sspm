@@ -34,15 +34,35 @@ use crate::rhm::{read_entry, Rhm, RhmMap, RhmNote};
 
 #[derive(Debug, Default, Deserialize)]
 struct PhxmMeta {
-    #[serde(rename = "ID", default)]
+    #[serde(
+        rename = "ID",
+        default,
+        deserialize_with = "crate::rhm::null_to_default"
+    )]
     id: String,
-    #[serde(rename = "Artist", default)]
+    #[serde(
+        rename = "Artist",
+        default,
+        deserialize_with = "crate::rhm::null_to_default"
+    )]
     artist: String,
-    #[serde(rename = "ArtistLink", default)]
+    #[serde(
+        rename = "ArtistLink",
+        default,
+        deserialize_with = "crate::rhm::null_to_default"
+    )]
     artist_link: String,
-    #[serde(rename = "ArtistPlatform", default)]
+    #[serde(
+        rename = "ArtistPlatform",
+        default,
+        deserialize_with = "crate::rhm::null_to_default"
+    )]
     artist_platform: String,
-    #[serde(rename = "Title", default)]
+    #[serde(
+        rename = "Title",
+        default,
+        deserialize_with = "crate::rhm::null_to_default"
+    )]
     title: String,
     #[serde(rename = "Rating", default)]
     rating: f32,
@@ -50,7 +70,11 @@ struct PhxmMeta {
     mappers: Vec<String>,
     #[serde(rename = "Difficulty", default)]
     difficulty: i32,
-    #[serde(rename = "DifficultyName", default)]
+    #[serde(
+        rename = "DifficultyName",
+        default,
+        deserialize_with = "crate::rhm::null_to_default"
+    )]
     difficulty_name: String,
     #[serde(rename = "Length", default)]
     length: i64,
@@ -58,7 +82,11 @@ struct PhxmMeta {
     has_audio: bool,
     #[serde(rename = "HasCover", default)]
     has_cover: bool,
-    #[serde(rename = "AudioExt", default)]
+    #[serde(
+        rename = "AudioExt",
+        default,
+        deserialize_with = "crate::rhm::null_to_default"
+    )]
     audio_ext: String,
 }
 

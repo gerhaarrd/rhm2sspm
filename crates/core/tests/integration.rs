@@ -7,6 +7,24 @@ fn testdata(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Real `.rhm` files can write an explicit JSON `null` for a string
+/// field (confirmed: `"CustomDifficultyName":null`) instead of omitting
+/// the key -- `#[serde(default)]` alone doesn't cover that, only a
+/// missing key. Regression test for that fix.
+#[test]
+fn reads_rhm_with_explicit_null_custom_difficulty_name() {
+    let bytes = fs::read(testdata(
+        "Neocoretex - Somebody That I Used To Drrrrr (Cut).rhm",
+    ))
+    .unwrap();
+    let rhm = rhmsspm_core::rhm::read(&bytes).unwrap();
+    assert_eq!(rhm.map.custom_difficulty_name, "");
+    assert!(!rhm.map.notes.is_empty());
+
+    let report = rhmsspm_core::convert::convert_rhm(rhm).unwrap();
+    assert!(report.note_count > 0);
+}
+
 /// A real, minimal (1x1 white pixel) PNG -- used to confirm a genuinely
 /// PNG-format cover *does* survive the `.phxm`/`.npk` writers, as the
 /// counterpart to the "non-PNG cover gets dropped" behavior covered by

@@ -43,11 +43,11 @@ use crate::rhm::{read_entry, Rhm, RhmMap, RhmNote, RhmTimingPoint};
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NpkMeta {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::rhm::null_to_default")]
     song_title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::rhm::null_to_default")]
     song_artist: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::rhm::null_to_default")]
     map_creator: String,
     #[serde(flatten)]
     rest: serde_json::Map<String, Value>,

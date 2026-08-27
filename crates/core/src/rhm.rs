@@ -62,6 +62,18 @@ impl RhmNote {
     }
 }
 
+/// Some real `.rhm` files write an explicit JSON `null` for a string
+/// field instead of omitting the key (confirmed against a real file
+/// with `"CustomDifficultyName":null`) -- `#[serde(default)]` alone
+/// only covers the key being *absent*, not present-but-null, so this
+/// closes that gap by treating either the same way.
+pub(crate) fn null_to_default<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RhmTimingPoint {
     #[serde(rename = "OffsetMs")]
@@ -82,11 +94,11 @@ pub struct RhmMap {
     /// uploaded/shared, in which case a fresh one is derived on export.
     #[serde(rename = "LegacyId")]
     pub legacy_id: Option<String>,
-    #[serde(rename = "SongName")]
+    #[serde(rename = "SongName", default, deserialize_with = "null_to_default")]
     pub song_name: String,
     #[serde(rename = "Mappers", default)]
     pub mappers: Vec<String>,
-    #[serde(rename = "Title")]
+    #[serde(rename = "Title", default, deserialize_with = "null_to_default")]
     pub title: String,
     #[serde(rename = "Tags", default)]
     pub tags: Vec<String>,
@@ -96,13 +108,21 @@ pub struct RhmMap {
     /// Preset difficulty slot (0..=4 in the current game).
     #[serde(rename = "Difficulty")]
     pub difficulty: i32,
-    #[serde(rename = "CustomDifficultyName", default)]
+    #[serde(
+        rename = "CustomDifficultyName",
+        default,
+        deserialize_with = "null_to_default"
+    )]
     pub custom_difficulty_name: String,
     #[serde(rename = "StarRating", default)]
     pub star_rating: f32,
     #[serde(rename = "Notes")]
     pub notes: Vec<RhmNote>,
-    #[serde(rename = "AudioFileName", default)]
+    #[serde(
+        rename = "AudioFileName",
+        default,
+        deserialize_with = "null_to_default"
+    )]
     pub audio_file_name: String,
     #[serde(rename = "ImagePath")]
     pub image_path: Option<String>,
