@@ -1,6 +1,6 @@
 # rhm2sspm
 
-Converts [Rhythia](https://rhythia.com) `.rhm` maps to [Sound Space+](https://ssplus.co) `.sspm` — and back. Timing offsets and off-grid ("quantum") notes are preserved exactly; nothing gets rounded or silently dropped.
+Converts map files between [Rhythia](https://rhythia.com) `.rhm`/`.phxm`, [Nova](https://pyrama.itch.io/nova) `.npk`, and [Sound Space+](https://ssplus.co) `.sspm` — any format to any other. Timing offsets and off-grid ("quantum") notes are preserved exactly; nothing gets rounded or silently dropped.
 
 A native desktop app (Windows + Linux) with drag-and-drop, batch conversion, metadata editing, and history — plus a CLI and a Rust library for anyone who wants to build on top of the conversion logic directly.
 
@@ -21,9 +21,13 @@ sudo pacman -S --needed gst-plugins-base gst-plugins-good gst-plugins-bad gst-pl
 
 ## What's preserved
 
-- **Note timing**: both formats store absolute milliseconds, so offsets are copied as-is — no unit conversion, no rounding error.
+- **Note timing**: stored as absolute milliseconds across every source format, so offsets are copied as-is — no unit conversion, no rounding error.
 - **Quantum notes**: off-grid notes keep their exact float position via SSPM's float32 marker encoding, instead of being snapped to the 3x3 grid.
 - **BPM/timing points, tags, online id/status**: fields SSPM has no native slot for are packed into an SSPM custom-data field, and restored if you convert that `.sspm` back to `.rhm`.
+- **`.npk`'s tempo events**: mapped onto the same timing-point concept as `.rhm`; any `beats`/`glides`/other event types (which have no RHM/SSPM equivalent) are preserved verbatim in custom data rather than dropped, even though Sound Space+ won't render them.
+- **Cover art of any format**: `.phxm`/`.npk` both require the cover to actually be PNG data, so a non-PNG cover (e.g. a JPEG from a `.rhm` source) is transcoded rather than dropped or shipped mislabeled.
+
+`.phxm` support is implemented straight from the game's own source ([`Rhythia/Client`](https://github.com/Rhythia/Client)) -- reading and writing. `.npk` was reverse engineered from a single real sample file (no public spec exists) -- treat it as best-effort -- but a file produced by this tool has been confirmed to actually import and play in the real game (Nova auto-imports anything dropped into its `queued` folder, which made this possible to test directly).
 
 ## CLI
 
@@ -31,14 +35,15 @@ sudo pacman -S --needed gst-plugins-base gst-plugins-good gst-plugins-bad gst-pl
 rhm2sspm [OPTIONS] <INPUTS>...
 
 Arguments:
-  <INPUTS>...  .rhm/.sspm files, or directories to scan recursively
+  <INPUTS>...  .rhm/.phxm/.npk/.sspm files, or directories to scan recursively
 
 Options:
-  -o, --output <OUTPUT>  Write converted files here instead of next to each input
-  -v, --verbose          Print per-map details (note count, quantum notes, duration, media)
+  -o, --output <OUTPUT>      Write converted files here instead of next to each input
+  -t, --to <rhm|phxm|npk|sspm>  Target format (default: .sspm, or .rhm for .sspm inputs)
+  -v, --verbose               Print per-map details (note count, quantum notes, duration, media)
 ```
 
-Converts in whichever direction matches each input file's extension; mixed batches and directories work.
+Defaults to whichever direction matches each input file's extension (`.sspm` in, `.rhm` out; anything else in, `.sspm` out); pass `--to` to convert to any of the four formats explicitly, e.g. `rhm2sspm song.rhm --to phxm`. Mixed batches and directories work.
 
 ## Building from source
 

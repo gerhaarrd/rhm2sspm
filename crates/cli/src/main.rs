@@ -3,16 +3,37 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anstream::{eprintln, println};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use owo_colors::OwoColorize;
+use rhmsspm_core::MapFormat;
 
-/// Convert Rhythia .rhm maps to .sspm (Sound Space+) and back, preserving
-/// note timing and off-grid ("quantum") positions. Direction is picked
-/// automatically from each input file's extension.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "lower")]
+enum FormatArg {
+    Rhm,
+    Phxm,
+    Npk,
+    Sspm,
+}
+
+impl From<FormatArg> for MapFormat {
+    fn from(value: FormatArg) -> Self {
+        match value {
+            FormatArg::Rhm => MapFormat::Rhm,
+            FormatArg::Phxm => MapFormat::Phxm,
+            FormatArg::Npk => MapFormat::Npk,
+            FormatArg::Sspm => MapFormat::Sspm,
+        }
+    }
+}
+
+/// Convert Rhythia .rhm/.phxm and Nova .npk maps to .sspm (Sound Space+)
+/// and back, or freely between any of the four. Target format defaults
+/// to .sspm (or .rhm, for .sspm inputs) unless --to is given.
 #[derive(Parser)]
 #[command(name = "rhm2sspm", version, about)]
 struct Args {
-    /// .rhm/.sspm files, or directories to scan recursively.
+    /// .rhm/.phxm/.npk/.sspm files, or directories to scan recursively.
     #[arg(required = true)]
     inputs: Vec<PathBuf>,
 
@@ -20,16 +41,22 @@ struct Args {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
+    /// Target format. Defaults to .sspm, or .rhm when converting *from*
+    /// .sspm -- pass explicitly to convert to .phxm/.npk, or to override
+    /// the default in either direction.
+    #[arg(short = 't', long, value_enum)]
+    to: Option<FormatArg>,
+
     /// Print per-map details (note count, quantum notes, duration, media).
     #[arg(short, long)]
     verbose: bool,
 }
 
 fn is_convertible(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some(e) if e.eq_ignore_ascii_case("rhm") || e.eq_ignore_ascii_case("sspm")
-    )
+    path.extension()
+        .and_then(|e| e.to_str())
+        .and_then(MapFormat::from_ext)
+        .is_some()
 }
 
 fn collect_input_files(inputs: &[PathBuf]) -> Vec<PathBuf> {
@@ -51,47 +78,38 @@ fn collect_input_files(inputs: &[PathBuf]) -> Vec<PathBuf> {
     files
 }
 
-fn convert_one(path: &Path, output_dir: Option<&Path>, verbose: bool) -> anyhow::Result<()> {
-    let is_sspm = path
+fn convert_one(
+    path: &Path,
+    output_dir: Option<&Path>,
+    to: Option<MapFormat>,
+    verbose: bool,
+) -> anyhow::Result<()> {
+    let source = path
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("sspm"));
+        .and_then(MapFormat::from_ext)
+        .unwrap_or(MapFormat::Rhm);
+    let target = to.unwrap_or_else(|| MapFormat::default_target(source));
 
     let bytes = fs::read(path)?;
+    let rhm = rhmsspm_core::read_any(source, &bytes)?;
 
-    let (output, file_name, summary) = if is_sspm {
-        let parsed = rhmsspm_core::sspm::read(&bytes)?;
-        let quantum = parsed.notes.iter().filter(|n| !n.is_grid_aligned()).count();
-        let note_count = parsed.notes.len();
-        let rhm = rhmsspm_core::sspm_to_rhm(parsed);
-        let summary = format!(
-            "{} notes={} quantum={} duration={}ms audio={} cover={} timing_points={}",
-            rhm.map.title,
-            note_count,
-            quantum,
-            rhm.map.duration,
-            if rhm.audio.is_empty() { "no" } else { "yes" },
-            if rhm.cover.is_empty() { "no" } else { "yes" },
-            rhm.map.timing_points.len(),
-        );
-        let output = rhmsspm_core::rhm::write(&rhm)?;
-        let file_name = rhmsspm_core::rhm_file_name(path);
-        (output, file_name, summary)
-    } else {
-        let report = rhmsspm_core::convert_rhm_bytes(&bytes)?;
-        let file_name = rhmsspm_core::sspm_file_name(path);
-        let summary = format!(
-            "{} notes={} quantum={} duration={}ms audio={} cover={} timing_points={}",
-            report.title,
-            report.note_count,
-            report.quantum_note_count,
-            report.duration_ms,
-            if report.has_audio { "yes" } else { "no" },
-            if report.has_cover { "yes" } else { "no" },
-            report.preserved_timing_points,
-        );
-        (report.output, file_name, summary)
-    };
+    let summary = format!(
+        "{} notes={} quantum={} duration={}ms audio={} cover={} timing_points={}",
+        rhm.map.title,
+        rhm.map.notes.len(),
+        rhm.map
+            .notes
+            .iter()
+            .filter(|n| !n.is_grid_aligned())
+            .count(),
+        rhm.map.duration,
+        if rhm.audio.is_empty() { "no" } else { "yes" },
+        if rhm.cover.is_empty() { "no" } else { "yes" },
+        rhm.map.timing_points.len(),
+    );
+    let file_name = rhmsspm_core::output_file_name(path, target.ext());
+    let output = rhmsspm_core::write_any(target, rhm)?;
 
     let out_path = match output_dir {
         Some(dir) => {
@@ -100,6 +118,12 @@ fn convert_one(path: &Path, output_dir: Option<&Path>, verbose: bool) -> anyhow:
         }
         None => path.with_file_name(file_name),
     };
+    if out_path == path {
+        anyhow::bail!(
+            "refusing to overwrite the input ({} -> same path); pick a different --to format or --output directory",
+            path.display()
+        );
+    }
     fs::write(&out_path, &output)?;
 
     println!(
@@ -121,15 +145,16 @@ fn main() -> ExitCode {
 
     if files.is_empty() {
         eprintln!(
-            "{} no .rhm or .sspm files found in the given input(s)",
+            "{} no .rhm, .phxm, .npk or .sspm files found in the given input(s)",
             "error:".red().bold()
         );
         return ExitCode::FAILURE;
     }
 
+    let to = args.to.map(MapFormat::from);
     let mut failures = 0usize;
     for file in &files {
-        if let Err(err) = convert_one(file, args.output.as_deref(), args.verbose) {
+        if let Err(err) = convert_one(file, args.output.as_deref(), to, args.verbose) {
             eprintln!("{} {}: {err}", "✗".red().bold(), file.display());
             failures += 1;
         }

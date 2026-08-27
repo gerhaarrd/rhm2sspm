@@ -1,12 +1,14 @@
 import { useTranslation } from "../lib/useTranslation";
 import { IconUpload } from "./Icons";
 
-/** Highlights ".rhm"/".sspm" tokens inside the (already translated) title
+const HIGHLIGHTED_EXTENSIONS = [".rhm", ".phxm", ".npk", ".sspm"];
+
+/** Highlights map-extension tokens inside the (already translated) title
  * sentence, without needing a JSX-aware template per language. */
 function highlightExtensions(text: string) {
-  const parts = text.split(/(\.rhm|\.sspm)/);
+  const parts = text.split(/(\.rhm|\.phxm|\.npk|\.sspm)/);
   return parts.map((part, i) =>
-    part === ".rhm" || part === ".sspm" ? (
+    HIGHLIGHTED_EXTENSIONS.includes(part) ? (
       <span key={i} className="text-blue-400">
         {part}
       </span>

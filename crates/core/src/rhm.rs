@@ -11,6 +11,34 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ConvertError, Result};
 
+/// True when `bytes` starts with the PNG signature.
+fn is_png(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+}
+
+/// Returns `bytes` as genuine PNG data, transcoding if it isn't already.
+/// `.phxm`/`.npk` both hard-require the cover to actually be PNG
+/// (confirmed against the real games: mislabeling a JPEG cover as
+/// `cover.png` makes their loader -- which calls a PNG-specific decoder
+/// regardless of the source format -- log `ERR_FILE_CORRUPT` and show a
+/// broken image, though the rest of the chart still imports and plays
+/// fine). Returns `None` only if `bytes` isn't a decodable image at all,
+/// in which case the caller should drop the cover rather than ship
+/// something broken.
+pub(crate) fn to_png(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.is_empty() {
+        return None;
+    }
+    if is_png(bytes) {
+        return Some(bytes.to_vec());
+    }
+    let img = image::load_from_memory(bytes).ok()?;
+    let mut png = Vec::new();
+    img.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
+    Some(png)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RhmNote {
     #[serde(rename = "Time")]
@@ -21,6 +49,17 @@ pub struct RhmNote {
     pub x: f32,
     #[serde(rename = "Y")]
     pub y: f32,
+}
+
+impl RhmNote {
+    /// True for a real 3x3 grid position (0, 1 or 2 on both axes);
+    /// anything else is an off-grid "quantum" note.
+    pub fn is_grid_aligned(&self) -> bool {
+        self.x.fract() == 0.0
+            && self.y.fract() == 0.0
+            && (0.0..=2.0).contains(&self.x)
+            && (0.0..=2.0).contains(&self.y)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,7 +166,10 @@ pub fn write(rhm: &Rhm) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn read_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Option<Vec<u8>>> {
+pub(crate) fn read_entry(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Result<Option<Vec<u8>>> {
     match archive.by_name(name) {
         Ok(mut file) => {
             let mut buf = Vec::with_capacity(file.size() as usize);
@@ -136,5 +178,17 @@ fn read_entry(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Resul
         }
         Err(zip::result::ZipError::FileNotFound) => Ok(None),
         Err(err) => Err(err.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_png_checks_the_real_signature_not_the_file_name() {
+        assert!(is_png(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR"));
+        assert!(!is_png(b"\xff\xd8\xff\xe0\x00\x10JFIF")); // JPEG
+        assert!(!is_png(b""));
     }
 }

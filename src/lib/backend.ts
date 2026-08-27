@@ -1,20 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { ConversionOutcome, MapPreview, MetadataOverrides } from "../types";
+import type { ConversionOutcome, MapFormat, MapPreview, MetadataOverrides } from "../types";
 
-export function previewMap(path: string): Promise<MapPreview> {
-  return invoke("preview_map", { path });
+export function previewMap(path: string, targetFormat: MapFormat): Promise<MapPreview> {
+  return invoke("preview_map", { path, targetFormat });
 }
 
 export function convertMapFile(
   inputPath: string,
   outputDir: string | null,
+  targetFormat: MapFormat,
   overrides: MetadataOverrides | null,
 ): Promise<ConversionOutcome> {
-  return invoke("convert_map_file", { inputPath, outputDir, overrides });
+  return invoke("convert_map_file", { inputPath, outputDir, targetFormat, overrides });
 }
 
-/** Expands a mix of file and directory paths into a flat list of `.rhm`/`.sspm` files. */
+/** Expands a mix of file and directory paths into a flat list of `.rhm`/`.phxm`/`.npk`/`.sspm` files. */
 export function resolveMapPaths(paths: string[]): Promise<string[]> {
   return invoke("resolve_map_paths", { paths });
 }
@@ -27,7 +28,9 @@ export function getAudioDataUrl(path: string): Promise<string | null> {
 export async function pickMapFiles(): Promise<string[]> {
   const result = await open({
     multiple: true,
-    filters: [{ name: "Mapa Rhythia / Sound Space+", extensions: ["rhm", "sspm"] }],
+    filters: [
+      { name: "Mapa Rhythia / Nova / Sound Space+", extensions: ["rhm", "phxm", "npk", "sspm"] },
+    ],
   });
   if (!result) return [];
   return Array.isArray(result) ? result : [result];

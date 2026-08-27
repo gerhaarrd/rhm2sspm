@@ -27,8 +27,8 @@ const pt: Record<string, string> = {
   "header.add.tooltip": "Adicionar arquivos (Ctrl+O)",
   "header.checkUpdates.tooltip": "Verificar atualizações",
 
-  "dropzone.title": "Arraste seus mapas .rhm ou .sspm aqui",
-  "dropzone.subtitle": "converte Rhythia ⇄ Sound Space+ automaticamente",
+  "dropzone.title": "Arraste seus mapas .rhm, .phxm, .npk ou .sspm aqui",
+  "dropzone.subtitle": "converte Rhythia/Nova ⇄ Sound Space+ automaticamente",
   "dropzone.browse": "Escolher arquivos…",
 
   "dragOverlay.drop": "Solte para adicionar",
@@ -66,6 +66,7 @@ const pt: Record<string, string> = {
   "queueItem.retry": "Tentar converter novamente",
   "queueItem.editMetadata": "Editar metadados",
   "queueItem.remove": "Remover da fila",
+  "queueItem.targetFormat.tooltip": "Formato de saída",
 
   "toolbar.filterPlaceholder": "Filtrar por nome, mapper…",
   "toolbar.results": "{n} resultado(s)",
@@ -128,8 +129,8 @@ const en: Record<string, string> = {
   "header.add.tooltip": "Add files (Ctrl+O)",
   "header.checkUpdates.tooltip": "Check for updates",
 
-  "dropzone.title": "Drop your .rhm or .sspm maps here",
-  "dropzone.subtitle": "converts Rhythia ⇄ Sound Space+ automatically",
+  "dropzone.title": "Drop your .rhm, .phxm, .npk or .sspm maps here",
+  "dropzone.subtitle": "converts Rhythia/Nova ⇄ Sound Space+ automatically",
   "dropzone.browse": "Choose files…",
 
   "dragOverlay.drop": "Drop to add",
@@ -167,6 +168,7 @@ const en: Record<string, string> = {
   "queueItem.retry": "Retry conversion",
   "queueItem.editMetadata": "Edit metadata",
   "queueItem.remove": "Remove from queue",
+  "queueItem.targetFormat.tooltip": "Output format",
 
   "toolbar.filterPlaceholder": "Filter by name, mapper…",
   "toolbar.results": "{n} result(s)",

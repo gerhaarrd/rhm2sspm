@@ -5,10 +5,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-/// Metadata preview for a queued map, regardless of which direction it
-/// will convert (`.rhm -> .sspm` or `.sspm -> .rhm`): both sides of the
-/// conversion share the same handful of concepts (title, mappers,
-/// difficulty, notes...), so one shape covers both.
+/// Metadata preview for a queued map, regardless of source/target format:
+/// every format shares the same handful of concepts (title, mappers,
+/// difficulty, notes...), so one shape covers all of them.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MapPreview {
@@ -30,7 +29,7 @@ struct MapPreview {
     /// by actually running the conversion in memory, not estimated).
     output_bytes: usize,
     /// Non-blocking sanity-check messages -- informational, conversion
-    /// proceeds anyway. Only populated for `.rhm -> .sspm` today.
+    /// proceeds anyway.
     warnings: Vec<String>,
     /// Note count per time bucket across the track, normalized to 0..=1
     /// against the densest bucket. Fixed-size so the UI can draw a
@@ -88,16 +87,20 @@ fn cover_data_url(cover: &[u8]) -> Option<String> {
         .then(|| format!("data:{};base64,{}", cover_mime(cover), BASE64.encode(cover)))
 }
 
-fn is_sspm_path(path: &Path) -> bool {
+use rhmsspm_core::MapFormat;
+
+fn is_convertible_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("sspm"))
+        .and_then(MapFormat::from_ext)
+        .is_some()
 }
 
-fn is_rhm_path(path: &Path) -> bool {
+fn source_format(path: &Path) -> MapFormat {
     path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("rhm"))
+        .and_then(MapFormat::from_ext)
+        .unwrap_or(MapFormat::Rhm)
 }
 
 /// User edits made in the metadata editor before conversion. `None`
@@ -131,67 +134,25 @@ fn apply_overrides(map: &mut rhmsspm_core::rhm::RhmMap, overrides: Option<Metada
     }
 }
 
-/// Reads a `.rhm` or `.sspm` file and actually runs the conversion in
-/// memory (without writing anything) so the UI can show a preview card
-/// -- including the exact output size -- as soon as a file is queued.
+/// Reads a `.rhm`/`.phxm`/`.npk`/`.sspm` file and actually runs the
+/// conversion in memory (without writing anything) so the UI can show a
+/// preview card -- including the exact output size -- as soon as a file
+/// is queued. `target_format` picks the destination; omit it to get the
+/// same smart default `convert_map_file` uses.
 #[tauri::command]
-fn preview_map(path: String) -> Result<MapPreview, String> {
+fn preview_map(path: String, target_format: Option<MapFormat>) -> Result<MapPreview, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("failed to read {path}: {e}"))?;
+    let input = Path::new(&path);
+    let source = source_format(input);
+    let target = target_format.unwrap_or_else(|| MapFormat::default_target(source));
 
-    if is_sspm_path(Path::new(&path)) {
-        let parsed = rhmsspm_core::sspm::read(&bytes).map_err(|e| e.to_string())?;
-
-        let quantum_note_count = parsed.notes.iter().filter(|n| !n.is_grid_aligned()).count();
-        let cover_url = cover_data_url(&parsed.cover);
-        let has_audio = !parsed.audio.is_empty();
-        let has_cover = !parsed.cover.is_empty();
-        let note_count = parsed.notes.len();
-        let times: Vec<i64> = parsed.notes.iter().map(|n| n.ms as i64).collect();
-        let note_density = note_density_histogram(&times, parsed.last_ms as i64);
-        let mappers = parsed.mappers.clone();
-        let song_name = parsed.song_name.clone();
-        let difficulty = parsed.difficulty as i32;
-        let star_rating = parsed.rating as f32 / 10.0;
-        let custom_difficulty_name = parsed
-            .custom_strings
-            .get("difficulty_name")
-            .cloned()
-            .unwrap_or_default();
-
-        let rhm = rhmsspm_core::sspm_to_rhm(parsed);
-        let title = rhm.map.title.clone();
-        let duration_ms = rhm.map.duration;
-        let timing_points_count = rhm.map.timing_points.len();
-        let output = rhmsspm_core::rhm::write(&rhm).map_err(|e| e.to_string())?;
-
-        return Ok(MapPreview {
-            path,
-            title,
-            song_name,
-            mappers,
-            duration_ms,
-            note_count,
-            quantum_note_count,
-            difficulty,
-            custom_difficulty_name,
-            star_rating,
-            has_audio,
-            has_cover,
-            cover_data_url: cover_url,
-            timing_points_count,
-            output_bytes: output.len(),
-            warnings: Vec::new(),
-            note_density,
-        });
-    }
-
-    let rhm = rhmsspm_core::rhm::read(&bytes).map_err(|e| e.to_string())?;
+    let rhm = rhmsspm_core::read_any(source, &bytes).map_err(|e| e.to_string())?;
 
     let quantum_note_count = rhm
         .map
         .notes
         .iter()
-        .filter(|n| n.x.fract() != 0.0 || n.y.fract() != 0.0)
+        .filter(|n| !n.is_grid_aligned())
         .count();
     let cover_url = cover_data_url(&rhm.cover);
     let mappers = rhm.map.mappers.clone();
@@ -205,16 +166,19 @@ fn preview_map(path: String) -> Result<MapPreview, String> {
     let warnings = rhmsspm_core::lint(&rhm);
     let times: Vec<i64> = rhm.map.notes.iter().map(|n| n.time).collect();
     let note_density = note_density_histogram(&times, rhm.map.duration);
+    let note_count = rhm.map.notes.len();
+    let duration_ms = rhm.map.duration;
+    let title = rhm.map.title.clone();
 
-    let report = rhmsspm_core::convert_rhm(rhm).map_err(|e| e.to_string())?;
+    let output = rhmsspm_core::write_any(target, rhm).map_err(|e| e.to_string())?;
 
     Ok(MapPreview {
         path,
-        title: report.title,
+        title,
         song_name,
         mappers,
-        duration_ms: report.duration_ms,
-        note_count: report.note_count,
+        duration_ms,
+        note_count,
         quantum_note_count,
         difficulty,
         custom_difficulty_name,
@@ -223,7 +187,7 @@ fn preview_map(path: String) -> Result<MapPreview, String> {
         has_cover,
         cover_data_url: cover_url,
         timing_points_count,
-        output_bytes: report.output.len(),
+        output_bytes: output.len(),
         warnings,
         note_density,
     })
@@ -249,15 +213,10 @@ fn audio_mime(bytes: &[u8]) -> &'static str {
 #[tauri::command]
 fn get_audio_data_url(path: String) -> Result<Option<String>, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("failed to read {path}: {e}"))?;
-    let audio = if is_sspm_path(Path::new(&path)) {
-        rhmsspm_core::sspm::read(&bytes)
-            .map_err(|e| e.to_string())?
-            .audio
-    } else {
-        rhmsspm_core::rhm::read(&bytes)
-            .map_err(|e| e.to_string())?
-            .audio
-    };
+    let source = source_format(Path::new(&path));
+    let audio = rhmsspm_core::read_any(source, &bytes)
+        .map_err(|e| e.to_string())?
+        .audio;
     if audio.is_empty() {
         return Ok(None);
     }
@@ -268,9 +227,9 @@ fn get_audio_data_url(path: String) -> Result<Option<String>, String> {
     )))
 }
 
-/// Expands a mix of `.rhm`/`.sspm` file paths and directory paths (e.g.
-/// from a drag-and-drop drop event) into a flat, deduplicated list,
-/// recursing into directories.
+/// Expands a mix of `.rhm`/`.phxm`/`.npk`/`.sspm` file paths and
+/// directory paths (e.g. from a drag-and-drop drop event) into a flat,
+/// deduplicated list, recursing into directories.
 #[tauri::command]
 fn resolve_map_paths(paths: Vec<String>) -> Vec<String> {
     let mut out = Vec::new();
@@ -281,11 +240,11 @@ fn resolve_map_paths(paths: Vec<String>) -> Vec<String> {
                 .into_iter()
                 .filter_map(|e| e.ok())
             {
-                if is_rhm_path(entry.path()) || is_sspm_path(entry.path()) {
+                if is_convertible_path(entry.path()) {
                     out.push(entry.path().display().to_string());
                 }
             }
-        } else if is_rhm_path(path) || is_sspm_path(path) {
+        } else if is_convertible_path(path) {
             out.push(raw);
         }
     }
@@ -294,77 +253,41 @@ fn resolve_map_paths(paths: Vec<String>) -> Vec<String> {
     out
 }
 
-/// Converts one `.rhm` -> `.sspm` or `.sspm` -> `.rhm` (direction picked
-/// from the input's extension), writing next to the source file unless
+/// Converts one map from whatever format its extension indicates to
+/// `target_format` (defaulting to `.sspm`, or `.rhm` for `.sspm`
+/// sources, when omitted), writing next to the source file unless
 /// `output_dir` is given. `overrides`, when present, are applied to the
 /// map before conversion (title/mapper/difficulty edits made in the UI).
 #[tauri::command]
 fn convert_map_file(
     input_path: String,
     output_dir: Option<String>,
+    target_format: Option<MapFormat>,
     overrides: Option<MetadataOverrides>,
 ) -> Result<ConversionOutcome, String> {
     let bytes =
         std::fs::read(&input_path).map_err(|e| format!("failed to read {input_path}: {e}"))?;
     let input = Path::new(&input_path);
+    let source = source_format(input);
+    let target = target_format.unwrap_or_else(|| MapFormat::default_target(source));
 
-    let (
-        output,
-        file_name,
-        title,
-        note_count,
-        quantum_note_count,
-        duration_ms,
-        has_audio,
-        has_cover,
-        preserved_timing_points,
-    ) = if is_sspm_path(input) {
-        let parsed = rhmsspm_core::sspm::read(&bytes).map_err(|e| e.to_string())?;
-        let mut rhm = rhmsspm_core::sspm_to_rhm(parsed);
-        apply_overrides(&mut rhm.map, overrides);
+    let mut rhm = rhmsspm_core::read_any(source, &bytes).map_err(|e| e.to_string())?;
+    apply_overrides(&mut rhm.map, overrides);
 
-        let note_count = rhm.map.notes.len();
-        let quantum_note_count = rhm
-            .map
-            .notes
-            .iter()
-            .filter(|n| n.x.fract() != 0.0 || n.y.fract() != 0.0)
-            .count();
-        let duration_ms = rhm.map.duration;
-        let has_audio = !rhm.audio.is_empty();
-        let has_cover = !rhm.cover.is_empty();
-        let preserved_timing_points = rhm.map.timing_points.len();
-        let title = rhm.map.title.clone();
-        let output = rhmsspm_core::rhm::write(&rhm).map_err(|e| e.to_string())?;
-        let file_name = rhmsspm_core::rhm_file_name(input);
-        (
-            output,
-            file_name,
-            title,
-            note_count,
-            quantum_note_count,
-            duration_ms,
-            has_audio,
-            has_cover,
-            preserved_timing_points,
-        )
-    } else {
-        let mut rhm = rhmsspm_core::rhm::read(&bytes).map_err(|e| e.to_string())?;
-        apply_overrides(&mut rhm.map, overrides);
-        let report = rhmsspm_core::convert_rhm(rhm).map_err(|e| e.to_string())?;
-        let file_name = rhmsspm_core::sspm_file_name(input);
-        (
-            report.output,
-            file_name,
-            report.title,
-            report.note_count,
-            report.quantum_note_count,
-            report.duration_ms,
-            report.has_audio,
-            report.has_cover,
-            report.preserved_timing_points,
-        )
-    };
+    let note_count = rhm.map.notes.len();
+    let quantum_note_count = rhm
+        .map
+        .notes
+        .iter()
+        .filter(|n| !n.is_grid_aligned())
+        .count();
+    let duration_ms = rhm.map.duration;
+    let has_audio = !rhm.audio.is_empty();
+    let has_cover = !rhm.cover.is_empty();
+    let preserved_timing_points = rhm.map.timing_points.len();
+    let title = rhm.map.title.clone();
+    let file_name = rhmsspm_core::output_file_name(input, target.ext());
+    let output = rhmsspm_core::write_any(target, rhm).map_err(|e| e.to_string())?;
 
     let out_dir: PathBuf = match output_dir {
         Some(dir) => PathBuf::from(dir),
@@ -372,6 +295,12 @@ fn convert_map_file(
     };
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
     let out_path = out_dir.join(&file_name);
+    if out_path == input {
+        return Err(format!(
+            "refusing to overwrite the input ({}); pick a different target format or output folder",
+            input.display()
+        ));
+    }
     std::fs::write(&out_path, &output).map_err(|e| e.to_string())?;
 
     Ok(ConversionOutcome {

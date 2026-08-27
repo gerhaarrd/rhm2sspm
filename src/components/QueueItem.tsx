@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { QueueEntry } from "../types";
+import type { MapFormat, QueueEntry } from "../types";
 import { difficultyColor, difficultyName, formatBytes, formatDuration } from "../lib/format";
 import { getAudioDataUrl } from "../lib/backend";
+import { MAP_FORMATS, sourceFormatFromPath } from "../lib/mapFormat";
 import { toast } from "../lib/toast";
 import { useTranslation } from "../lib/useTranslation";
 import { NoteDensity } from "./NoteDensity";
@@ -50,6 +51,7 @@ export function QueueItem({
   isPlaying,
   onTogglePlay,
   onEdit,
+  onTargetFormatChange,
 }: {
   entry: QueueEntry;
   isSelected: boolean;
@@ -60,10 +62,13 @@ export function QueueItem({
   isPlaying: boolean;
   onTogglePlay: (id: string) => void;
   onEdit: (id: string) => void;
+  onTargetFormatChange: (id: string, format: MapFormat) => void;
 }) {
   const { t, tn } = useTranslation();
-  const { preview, outcome, status, error, overrides } = entry;
+  const { preview, outcome, status, error, overrides, targetFormat } = entry;
   const fileLabel = entry.path.split(/[\\/]/).pop() ?? entry.path;
+  const sourceFormat = sourceFormatFromPath(entry.path);
+  const canPickFormat = status === "ready" || status === "error";
 
   const displayTitle = overrides?.title ?? preview?.title;
   const displayMappers = overrides?.mappers ?? preview?.mappers;
@@ -196,6 +201,20 @@ export function QueueItem({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        <select
+          value={targetFormat}
+          disabled={!canPickFormat}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onTargetFormatChange(entry.id, e.target.value as MapFormat)}
+          title={t("queueItem.targetFormat.tooltip")}
+          className="rounded-lg bg-[rgb(var(--ink)/0.06)] px-2 py-1.5 text-xs font-medium text-[rgb(var(--ink)/0.7)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.1)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {MAP_FORMATS.filter((f) => f !== sourceFormat).map((f) => (
+            <option key={f} value={f}>
+              .{f}
+            </option>
+          ))}
+        </select>
         {status === "loading" && <IconSpinner className="h-5 w-5 text-[rgb(var(--ink)/0.4)]" />}
         {status === "converting" && <IconSpinner className="h-5 w-5 text-blue-400" />}
         {status === "done" && outcome && (

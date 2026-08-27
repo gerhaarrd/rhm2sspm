@@ -11,6 +11,7 @@ import {
   resolveMapPaths,
 } from "./lib/backend";
 import { appendHistory, clearHistory, loadHistory, loadOutputDir, saveOutputDir } from "./lib/storage";
+import { defaultTargetFormat, sourceFormatFromPath } from "./lib/mapFormat";
 import { applyTheme, loadTheme, saveTheme, type ThemeMode } from "./lib/theme";
 import type { Locale } from "./lib/i18n";
 import { setLocale } from "./lib/i18n";
@@ -38,7 +39,7 @@ import {
   IconSun,
   IconUpload,
 } from "./components/Icons";
-import type { HistoryEntry, MetadataOverrides, QueueEntry } from "./types";
+import type { HistoryEntry, MapFormat, MetadataOverrides, QueueEntry } from "./types";
 
 const THEME_CYCLE: ThemeMode[] = ["dark", "light", "system"];
 const THEME_ICON: Record<ThemeMode, typeof IconSun> = {
@@ -142,11 +143,13 @@ export default function App() {
         outcome: null,
         error: null,
         overrides: null,
+        targetFormat: defaultTargetFormat(sourceFormatFromPath(path)),
       })),
     ]);
 
     for (const path of fresh) {
-      previewMap(path)
+      const targetFormat = defaultTargetFormat(sourceFormatFromPath(path));
+      previewMap(path, targetFormat)
         .then((preview) => {
           setEntries((prev) =>
             prev.map((e) => (e.id === idFor(path) ? { ...e, status: "ready", preview } : e)),
@@ -163,6 +166,29 @@ export default function App() {
         });
     }
   }, [t]);
+
+  const setTargetFormat = useCallback((id: string, targetFormat: MapFormat) => {
+    const entry = entriesRef.current.find((e) => e.id === id);
+    if (!entry) return;
+
+    setEntries((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, targetFormat, status: "loading", preview: null } : e)),
+    );
+
+    previewMap(entry.path, targetFormat)
+      .then((preview) => {
+        setEntries((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, status: "ready", preview } : e)),
+        );
+      })
+      .catch((err) => {
+        const message = String(err);
+        setEntries((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, status: "error", error: message } : e)),
+        );
+        toast.error(`${entry.preview?.title ?? entry.path}: ${message}`);
+      });
+  }, []);
 
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent((event) => {
@@ -243,7 +269,12 @@ export default function App() {
       await Promise.allSettled(
         targets.map(async (entry) => {
           try {
-            const outcome = await convertMapFile(entry.path, outputDir, entry.overrides);
+            const outcome = await convertMapFile(
+              entry.path,
+              outputDir,
+              entry.targetFormat,
+              entry.overrides,
+            );
             setEntries((prev) =>
               prev.map((e) => (e.id === entry.id ? { ...e, status: "done", outcome } : e)),
             );
@@ -484,6 +515,7 @@ export default function App() {
                 isPlaying={entry.id === playingId}
                 onTogglePlay={togglePlay}
                 onEdit={setEditingId}
+                onTargetFormatChange={setTargetFormat}
               />
             ))}
           </ul>

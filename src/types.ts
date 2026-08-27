@@ -1,3 +1,5 @@
+export type MapFormat = "rhm" | "phxm" | "npk" | "sspm";
+
 export interface MapPreview {
   path: string;
   title: string;
@@ -61,4 +63,5 @@ export interface QueueEntry {
   outcome: ConversionOutcome | null;
   error: string | null;
   overrides: MetadataOverrides | null;
+  targetFormat: MapFormat;
 }

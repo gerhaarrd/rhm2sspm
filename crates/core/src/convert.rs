@@ -65,6 +65,19 @@ pub fn convert_rhm_bytes(rhm_bytes: &[u8]) -> Result<ConversionReport> {
     convert_rhm(rhm)
 }
 
+/// Converts `.phxm` bytes to `.sspm` by parsing into the same `Rhm` shape
+/// `.rhm` uses, then running the exact same, already-tested conversion.
+pub fn convert_phxm_bytes(phxm_bytes: &[u8]) -> Result<ConversionReport> {
+    let rhm = crate::phxm::read(phxm_bytes)?;
+    convert_rhm(rhm)
+}
+
+/// Converts `.npk` bytes to `.sspm`, same approach as [`convert_phxm_bytes`].
+pub fn convert_npk_bytes(npk_bytes: &[u8]) -> Result<ConversionReport> {
+    let rhm = crate::npk::read(npk_bytes)?;
+    convert_rhm(rhm)
+}
+
 pub fn convert_rhm(rhm: Rhm) -> Result<ConversionReport> {
     let Rhm { map, audio, cover } = rhm;
 
