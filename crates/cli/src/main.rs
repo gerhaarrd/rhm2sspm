@@ -1,10 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anstream::{eprintln, println};
+use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use owo_colors::OwoColorize;
+use rayon::prelude::*;
 use rhmsspm_core::MapFormat;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -47,6 +50,17 @@ struct Args {
     #[arg(short = 't', long, value_enum)]
     to: Option<FormatArg>,
 
+    /// Validate that each conversion would succeed (parse, convert,
+    /// re-parse the result) without writing anything to disk.
+    #[arg(long)]
+    check: bool,
+
+    /// Shift every note and timing point by this many milliseconds
+    /// (negative moves everything earlier) -- fixes a chart that's out
+    /// of sync with its audio.
+    #[arg(long, allow_hyphen_values = true)]
+    offset_ms: Option<i64>,
+
     /// Print per-map details (note count, quantum notes, duration, media).
     #[arg(short, long)]
     verbose: bool,
@@ -82,6 +96,8 @@ fn convert_one(
     path: &Path,
     output_dir: Option<&Path>,
     to: Option<MapFormat>,
+    offset_ms: Option<i64>,
+    check: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
     let source = path
@@ -92,7 +108,10 @@ fn convert_one(
     let target = to.unwrap_or_else(|| MapFormat::default_target(source));
 
     let bytes = fs::read(path)?;
-    let rhm = rhmsspm_core::read_any(source, &bytes)?;
+    let mut rhm = rhmsspm_core::read_any(source, &bytes)?;
+    if let Some(offset) = offset_ms {
+        rhmsspm_core::shift_notes(&mut rhm.map, offset);
+    }
 
     let summary = format!(
         "{} notes={} quantum={} duration={}ms audio={} cover={} timing_points={}",
@@ -110,6 +129,25 @@ fn convert_one(
     );
     let file_name = rhmsspm_core::output_file_name(path, target.ext());
     let output = rhmsspm_core::write_any(target, rhm)?;
+
+    // Verify the bytes we're about to hand off actually parse back --
+    // catches writer bugs the same way a corrupt-on-disk file would,
+    // before it ever touches the filesystem (or in --check mode, at all).
+    rhmsspm_core::read_any(target, &output)
+        .context("converted output failed to verify (re-parse)")?;
+
+    if check {
+        println!(
+            "{} {} {}",
+            "✓".green().bold(),
+            path.display(),
+            format!("(check: would write {file_name}, {} bytes)", output.len()).dimmed()
+        );
+        if verbose {
+            println!("  {}", summary.dimmed());
+        }
+        return Ok(());
+    }
 
     let out_path = match output_dir {
         Some(dir) => {
@@ -152,14 +190,22 @@ fn main() -> ExitCode {
     }
 
     let to = args.to.map(MapFormat::from);
-    let mut failures = 0usize;
-    for file in &files {
-        if let Err(err) = convert_one(file, args.output.as_deref(), to, args.verbose) {
+    let failures = AtomicUsize::new(0);
+    files.par_iter().for_each(|file| {
+        if let Err(err) = convert_one(
+            file,
+            args.output.as_deref(),
+            to,
+            args.offset_ms,
+            args.check,
+            args.verbose,
+        ) {
             eprintln!("{} {}: {err}", "✗".red().bold(), file.display());
-            failures += 1;
+            failures.fetch_add(1, Ordering::Relaxed);
         }
-    }
+    });
 
+    let failures = failures.load(Ordering::Relaxed);
     let total = files.len();
     let ok = total - failures;
     println!();

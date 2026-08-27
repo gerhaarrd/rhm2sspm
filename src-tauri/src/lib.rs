@@ -113,6 +113,10 @@ struct MetadataOverrides {
     mappers: Option<Vec<String>>,
     difficulty: Option<i32>,
     custom_difficulty_name: Option<String>,
+    /// Shifts every note and timing point by this many ms (negative
+    /// moves everything earlier) -- fixes a chart that's out of sync
+    /// with its audio.
+    time_offset_ms: Option<i64>,
 }
 
 fn apply_overrides(map: &mut rhmsspm_core::rhm::RhmMap, overrides: Option<MetadataOverrides>) {
@@ -131,6 +135,9 @@ fn apply_overrides(map: &mut rhmsspm_core::rhm::RhmMap, overrides: Option<Metada
     }
     if let Some(v) = o.custom_difficulty_name {
         map.custom_difficulty_name = v;
+    }
+    if let Some(offset) = o.time_offset_ms {
+        rhmsspm_core::shift_notes(map, offset);
     }
 }
 
@@ -289,6 +296,10 @@ fn convert_map_file(
     let file_name = rhmsspm_core::output_file_name(input, target.ext());
     let output = rhmsspm_core::write_any(target, rhm).map_err(|e| e.to_string())?;
 
+    // Catches a writer bug before it ever reaches disk.
+    rhmsspm_core::read_any(target, &output)
+        .map_err(|e| format!("converted output failed to verify (re-parse): {e}"))?;
+
     let out_dir: PathBuf = match output_dir {
         Some(dir) => PathBuf::from(dir),
         None => input.parent().map(Path::to_path_buf).unwrap_or_default(),
@@ -303,6 +314,18 @@ fn convert_map_file(
     }
     std::fs::write(&out_path, &output).map_err(|e| e.to_string())?;
 
+    // Re-read the bytes actually persisted to disk (not the in-memory
+    // copy above) -- catches a truncated/corrupted write, not just a
+    // writer bug.
+    let written = std::fs::read(&out_path).map_err(|e| e.to_string())?;
+    if let Err(e) = rhmsspm_core::read_any(target, &written) {
+        let _ = std::fs::remove_file(&out_path);
+        return Err(format!(
+            "wrote {} but it failed to verify afterwards ({e}) -- the file was removed, please try again",
+            out_path.display()
+        ));
+    }
+
     Ok(ConversionOutcome {
         input_path,
         output_path: out_path.display().to_string(),
@@ -315,6 +338,17 @@ fn convert_map_file(
         preserved_timing_points,
         output_bytes: output.len(),
     })
+}
+
+/// Files this process was launched with (double-clicked, or "open
+/// with...") -- read once by the frontend on startup. Argv[0] is the
+/// executable path itself, so only later args are considered.
+#[tauri::command]
+fn get_launch_files() -> Vec<String> {
+    std::env::args()
+        .skip(1)
+        .filter(|a| is_convertible_path(Path::new(a)))
+        .collect()
 }
 
 /// Bundles a set of already-converted files into one `.zip`, ready to share.
@@ -361,15 +395,30 @@ fn export_zip(paths: Vec<String>, dest: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be the first plugin registered. When a second instance is
+        // launched (e.g. double-clicking another map file while the app
+        // is already open), this fires in the *original* process with
+        // the new instance's argv instead of a second window opening.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri::{Emitter, Manager};
+            let paths: Vec<String> = argv
+                .into_iter()
+                .skip(1)
+                .filter(|a| is_convertible_path(Path::new(a)))
+                .collect();
+            if !paths.is_empty() {
+                let _ = app.emit("file-opened", paths);
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        // Wired up but dormant: tauri.conf.json's `plugins.updater` has
-        // an empty pubkey/endpoints (a real signing key and release
-        // endpoint don't exist yet -- the plugin requires *some* config
-        // to be present, or it panics on startup instead of degrading
-        // gracefully). With it empty, `check()` cleanly returns
-        // EmptyEndpoints instead of finding anything -- see
-        // docs/auto-update.md for what turning this on for real requires.
+        // Active: tauri.conf.json's `plugins.updater` has a real pubkey
+        // and points at this repo's GitHub releases. Signing itself
+        // happens in CI (release.yml, via TAURI_SIGNING_PRIVATE_KEY),
+        // not here -- see docs/auto-update.md.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(
@@ -391,7 +440,8 @@ pub fn run() {
             convert_map_file,
             resolve_map_paths,
             get_audio_data_url,
-            export_zip
+            export_zip,
+            get_launch_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

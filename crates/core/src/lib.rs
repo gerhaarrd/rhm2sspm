@@ -17,6 +17,7 @@ pub use format::{read_any, write_any, MapFormat};
 pub use lint::lint;
 pub use paths::{output_file_name, rhm_file_name, sspm_file_name};
 pub use reverse::sspm_to_rhm;
+pub use rhm::shift_notes;
 
 /// Converts `.sspm` v2 bytes to a `.rhm` zip container.
 pub fn convert_sspm_bytes(sspm_bytes: &[u8]) -> Result<Vec<u8>> {

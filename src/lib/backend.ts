@@ -25,6 +25,11 @@ export function getAudioDataUrl(path: string): Promise<string | null> {
   return invoke("get_audio_data_url", { path });
 }
 
+/** Files this instance was launched with (double-click / "open with"). */
+export function getLaunchFiles(): Promise<string[]> {
+  return invoke("get_launch_files");
+}
+
 export async function pickMapFiles(): Promise<string[]> {
   const result = await open({
     multiple: true,

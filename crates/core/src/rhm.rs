@@ -126,6 +126,25 @@ pub struct Rhm {
     pub cover: Vec<u8>,
 }
 
+/// Shifts every note and timing point by `offset_ms` (negative moves
+/// everything earlier), clamping so nothing goes before 0 -- a common
+/// fix for a chart that's out of sync with its audio. `duration` is
+/// adjusted to keep covering both the shifted end of the chart and the
+/// original track length.
+pub fn shift_notes(map: &mut RhmMap, offset_ms: i64) {
+    if offset_ms == 0 {
+        return;
+    }
+    for note in &mut map.notes {
+        note.time = (note.time + offset_ms).max(0);
+    }
+    for point in &mut map.timing_points {
+        point.offset_ms = (point.offset_ms + offset_ms).max(0);
+    }
+    let last_note_ms = map.notes.iter().map(|n| n.time).max().unwrap_or(0);
+    map.duration = (map.duration + offset_ms).max(last_note_ms).max(0);
+}
+
 pub fn read(bytes: &[u8]) -> Result<Rhm> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
 
@@ -190,5 +209,70 @@ mod tests {
         assert!(is_png(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR"));
         assert!(!is_png(b"\xff\xd8\xff\xe0\x00\x10JFIF")); // JPEG
         assert!(!is_png(b""));
+    }
+
+    fn sample_map(notes: Vec<RhmNote>, duration: i64) -> RhmMap {
+        RhmMap {
+            online_id: None,
+            online_status: None,
+            legacy_id: None,
+            song_name: String::new(),
+            mappers: Vec::new(),
+            title: String::new(),
+            tags: Vec::new(),
+            duration,
+            difficulty: 0,
+            custom_difficulty_name: String::new(),
+            star_rating: 0.0,
+            notes,
+            audio_file_name: String::new(),
+            image_path: None,
+            audio_timing_mode: None,
+            timing_points: vec![RhmTimingPoint {
+                offset_ms: 100,
+                bpm: 120.0,
+            }],
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn shift_notes_moves_notes_timing_points_and_duration() {
+        let mut map = sample_map(
+            vec![
+                RhmNote {
+                    time: 100,
+                    x: 0.0,
+                    y: 0.0,
+                },
+                RhmNote {
+                    time: 200,
+                    x: 0.0,
+                    y: 0.0,
+                },
+            ],
+            1000,
+        );
+        shift_notes(&mut map, 50);
+        assert_eq!(map.notes[0].time, 150);
+        assert_eq!(map.notes[1].time, 250);
+        assert_eq!(map.timing_points[0].offset_ms, 150);
+        assert_eq!(map.duration, 1050);
+    }
+
+    #[test]
+    fn shift_notes_clamps_at_zero_for_negative_offsets() {
+        let mut map = sample_map(
+            vec![RhmNote {
+                time: 30,
+                x: 0.0,
+                y: 0.0,
+            }],
+            1000,
+        );
+        shift_notes(&mut map, -100);
+        assert_eq!(map.notes[0].time, 0);
+        assert_eq!(map.timing_points[0].offset_ms, 0);
+        assert_eq!(map.duration, 900);
     }
 }

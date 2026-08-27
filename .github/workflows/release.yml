@@ -41,16 +41,16 @@ jobs:
 
       - run: npm ci
 
-      # No TAURI_SIGNING_PRIVATE_KEY yet (see docs/auto-update.md), so
-      # this produces plain installers without updater signatures --
-      # that's expected until auto-update is actually turned on.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "rhm2sspm ${{ github.ref_name }}"
           releaseBody: "See the commit history for what changed."
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
           args: ${{ matrix.args }}

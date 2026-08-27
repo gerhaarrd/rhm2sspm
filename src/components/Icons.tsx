@@ -209,3 +209,15 @@ export function IconSpinner({ className }: IconProps) {
     </svg>
   );
 }
+
+export function IconLayers({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <g className={base}>
+        <path d="m12 3 8 4.5-8 4.5-8-4.5Z" />
+        <path d="m4 12 8 4.5 8-4.5" />
+        <path d="m4 16.5 8 4.5 8-4.5" />
+      </g>
+    </svg>
+  );
+}

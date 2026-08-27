@@ -11,6 +11,7 @@ import {
   IconCheck,
   IconClock,
   IconExternal,
+  IconLayers,
   IconMusic,
   IconPause,
   IconPencil,
@@ -52,6 +53,7 @@ export function QueueItem({
   onTogglePlay,
   onEdit,
   onTargetFormatChange,
+  onConvertToAllFormats,
 }: {
   entry: QueueEntry;
   isSelected: boolean;
@@ -63,12 +65,14 @@ export function QueueItem({
   onTogglePlay: (id: string) => void;
   onEdit: (id: string) => void;
   onTargetFormatChange: (id: string, format: MapFormat) => void;
+  onConvertToAllFormats: (id: string) => Promise<void>;
 }) {
   const { t, tn } = useTranslation();
   const { preview, outcome, status, error, overrides, targetFormat } = entry;
   const fileLabel = entry.path.split(/[\\/]/).pop() ?? entry.path;
   const sourceFormat = sourceFormatFromPath(entry.path);
   const canPickFormat = status === "ready" || status === "error";
+  const [isConvertingAll, setIsConvertingAll] = useState(false);
 
   const displayTitle = overrides?.title ?? preview?.title;
   const displayMappers = overrides?.mappers ?? preview?.mappers;
@@ -215,6 +219,29 @@ export function QueueItem({
             </option>
           ))}
         </select>
+        {canPickFormat && (
+          <button
+            type="button"
+            disabled={isConvertingAll}
+            onClick={async (e) => {
+              e.stopPropagation();
+              setIsConvertingAll(true);
+              try {
+                await onConvertToAllFormats(entry.id);
+              } finally {
+                setIsConvertingAll(false);
+              }
+            }}
+            title={t("queueItem.convertAllFormats.tooltip")}
+            className="rounded-lg p-2 text-[rgb(var(--ink)/0.4)] transition hover:bg-[rgb(var(--ink)/0.1)] hover:text-[rgb(var(--ink))] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isConvertingAll ? (
+              <IconSpinner className="h-4 w-4" />
+            ) : (
+              <IconLayers className="h-4 w-4" />
+            )}
+          </button>
+        )}
         {status === "loading" && <IconSpinner className="h-5 w-5 text-[rgb(var(--ink)/0.4)]" />}
         {status === "converting" && <IconSpinner className="h-5 w-5 text-blue-400" />}
         {status === "done" && outcome && (

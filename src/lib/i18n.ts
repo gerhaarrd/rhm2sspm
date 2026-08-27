@@ -33,6 +33,8 @@ const pt: Record<string, string> = {
 
   "dragOverlay.drop": "Solte para adicionar",
 
+  "footer.batchEdit": "Editar em lote",
+  "footer.batchEdit.tooltip": "Editar o título de vários mapas de uma vez (buscar e substituir)",
   "footer.exportZip": "Exportar .zip",
   "footer.exportZip.loading": "Exportando…",
   "footer.exportZip.tooltip": "Exportar todos os convertidos em um .zip",
@@ -42,8 +44,14 @@ const pt: Record<string, string> = {
   "footer.convert.tooltip": "Converter tudo (Ctrl+Enter)",
 
   "toast.dropFailed": "Não foi possível ler os arquivos/pastas soltos: {error}",
+  "toast.duplicateFile": "{file} já foi convertido antes (em {date})",
   "toast.conversionDone.one": "Conversão concluída.",
   "toast.conversionDone.other": "{n} mapas convertidos com sucesso.",
+  "toast.allFormatsDone": "Convertido pros {n} outros formatos.",
+  "toast.allFormatsPartial": "{ok}/{total} formatos convertidos, o resto falhou.",
+  "toast.allFormatsFailed": "Falha ao converter pros outros formatos.",
+  "toast.batchEditApplied.one": "1 título atualizado.",
+  "toast.batchEditApplied.other": "{n} títulos atualizados.",
   "toast.zipExported.one": "ZIP exportado com {n} mapa.",
   "toast.zipExported.other": "ZIP exportado com {n} mapas.",
   "toast.zipExportFailed": "Não foi possível exportar o ZIP: {error}",
@@ -67,6 +75,7 @@ const pt: Record<string, string> = {
   "queueItem.editMetadata": "Editar metadados",
   "queueItem.remove": "Remover da fila",
   "queueItem.targetFormat.tooltip": "Formato de saída",
+  "queueItem.convertAllFormats.tooltip": "Converter pros outros 3 formatos também",
 
   "toolbar.filterPlaceholder": "Filtrar por nome, mapper…",
   "toolbar.results": "{n} resultado(s)",
@@ -90,7 +99,19 @@ const pt: Record<string, string> = {
   "editor.difficulty": "Dificuldade",
   "editor.customDifficultyName": "Nome customizado",
   "editor.customDifficultyName.placeholder": "opcional",
+  "editor.timeOffsetMs": "Deslocar notas (ms, corrige dessincronia)",
   "editor.cancel": "Cancelar",
+
+  "batchEdit.title": "Editar título em lote",
+  "batchEdit.description": "Aplica a {n} mapas pendentes na fila.",
+  "batchEdit.find": "Buscar",
+  "batchEdit.find.placeholder": "ex: ft. ",
+  "batchEdit.replace": "Substituir por",
+  "batchEdit.replace.placeholder": "(deixe vazio pra remover)",
+  "batchEdit.matchCount.empty": "Digite um texto pra buscar",
+  "batchEdit.matchCount.one": "1 mapa será alterado",
+  "batchEdit.matchCount.other": "{n} mapas serão alterados",
+  "batchEdit.apply": "Aplicar",
   "editor.save": "Salvar",
 
   "difficulty.0": "Fácil",
@@ -135,6 +156,8 @@ const en: Record<string, string> = {
 
   "dragOverlay.drop": "Drop to add",
 
+  "footer.batchEdit": "Batch edit",
+  "footer.batchEdit.tooltip": "Edit the title of several maps at once (find and replace)",
   "footer.exportZip": "Export .zip",
   "footer.exportZip.loading": "Exporting…",
   "footer.exportZip.tooltip": "Export everything converted into one .zip",
@@ -144,8 +167,14 @@ const en: Record<string, string> = {
   "footer.convert.tooltip": "Convert all (Ctrl+Enter)",
 
   "toast.dropFailed": "Couldn't read the dropped files/folders: {error}",
+  "toast.duplicateFile": "{file} was already converted before (on {date})",
   "toast.conversionDone.one": "Conversion complete.",
   "toast.conversionDone.other": "{n} maps converted successfully.",
+  "toast.allFormatsDone": "Converted to the other {n} formats.",
+  "toast.allFormatsPartial": "{ok}/{total} formats converted, the rest failed.",
+  "toast.allFormatsFailed": "Failed to convert to the other formats.",
+  "toast.batchEditApplied.one": "1 title updated.",
+  "toast.batchEditApplied.other": "{n} titles updated.",
   "toast.zipExported.one": "Exported ZIP with {n} map.",
   "toast.zipExported.other": "Exported ZIP with {n} maps.",
   "toast.zipExportFailed": "Couldn't export the ZIP: {error}",
@@ -169,6 +198,7 @@ const en: Record<string, string> = {
   "queueItem.editMetadata": "Edit metadata",
   "queueItem.remove": "Remove from queue",
   "queueItem.targetFormat.tooltip": "Output format",
+  "queueItem.convertAllFormats.tooltip": "Also convert to the other 3 formats",
 
   "toolbar.filterPlaceholder": "Filter by name, mapper…",
   "toolbar.results": "{n} result(s)",
@@ -192,7 +222,19 @@ const en: Record<string, string> = {
   "editor.difficulty": "Difficulty",
   "editor.customDifficultyName": "Custom name",
   "editor.customDifficultyName.placeholder": "optional",
+  "editor.timeOffsetMs": "Shift notes (ms, fixes desync)",
   "editor.cancel": "Cancel",
+
+  "batchEdit.title": "Batch edit title",
+  "batchEdit.description": "Applies to {n} pending maps in the queue.",
+  "batchEdit.find": "Find",
+  "batchEdit.find.placeholder": "e.g. ft. ",
+  "batchEdit.replace": "Replace with",
+  "batchEdit.replace.placeholder": "(leave empty to remove)",
+  "batchEdit.matchCount.empty": "Type something to search for",
+  "batchEdit.matchCount.one": "1 map will be changed",
+  "batchEdit.matchCount.other": "{n} maps will be changed",
+  "batchEdit.apply": "Apply",
   "editor.save": "Save",
 
   "difficulty.0": "Easy",

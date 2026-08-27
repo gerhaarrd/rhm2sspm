@@ -27,8 +27,10 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
-      "endpoints": []
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzQUZEMEUxQ0IzQjc0RTAKUldUZ2REdkw0ZEN2azJZeUg0UmV2YjlDY1M4M1AvY3VuSGlEcjZMdll0ZExiMmdPUGR1SEZqVnAK",
+      "endpoints": [
+        "https://github.com/gerhaarrd/rhm2sspm/releases/latest/download/latest.json"
+      ]
     }
   },
   "bundle": {
@@ -39,6 +41,32 @@
         "bundleMediaFramework": true
       }
     },
+    "fileAssociations": [
+      {
+        "ext": ["rhm"],
+        "name": "Rhythia Map",
+        "description": "Rhythia map file",
+        "role": "Editor"
+      },
+      {
+        "ext": ["phxm"],
+        "name": "Rhythia Map (rewrite)",
+        "description": "Rhythia rewrite-client map file",
+        "role": "Editor"
+      },
+      {
+        "ext": ["npk"],
+        "name": "Nova Map",
+        "description": "Nova map file",
+        "role": "Editor"
+      },
+      {
+        "ext": ["sspm"],
+        "name": "Sound Space+ Map",
+        "description": "Sound Space+ map file",
+        "role": "Editor"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   convertMapFile,
   exportZip,
+  getLaunchFiles,
   pickMapFiles,
   pickOutputFolder,
   pickZipDestination,
@@ -11,7 +13,7 @@ import {
   resolveMapPaths,
 } from "./lib/backend";
 import { appendHistory, clearHistory, loadHistory, loadOutputDir, saveOutputDir } from "./lib/storage";
-import { defaultTargetFormat, sourceFormatFromPath } from "./lib/mapFormat";
+import { defaultTargetFormat, MAP_FORMATS, sourceFormatFromPath } from "./lib/mapFormat";
 import { applyTheme, loadTheme, saveTheme, type ThemeMode } from "./lib/theme";
 import type { Locale } from "./lib/i18n";
 import { setLocale } from "./lib/i18n";
@@ -20,6 +22,7 @@ import { checkForUpdate } from "./lib/updates";
 import { toast } from "./lib/toast";
 import { Dropzone } from "./components/Dropzone";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { BatchEditPanel } from "./components/BatchEditPanel";
 import { MetadataEditor } from "./components/MetadataEditor";
 import { QueueItem } from "./components/QueueItem";
 import { QueueToolbar, type SortKey } from "./components/QueueToolbar";
@@ -35,6 +38,7 @@ import {
   IconGrid,
   IconMonitor,
   IconMoon,
+  IconPencil,
   IconSpinner,
   IconSun,
   IconUpload,
@@ -78,6 +82,7 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(() => loadTheme());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showBatchEdit, setShowBatchEdit] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -133,6 +138,19 @@ export default function App() {
     const fresh = mapPaths.filter((p) => !existing.has(p));
     if (fresh.length === 0) return;
 
+    const previouslyConverted = new Map(history.map((h) => [h.inputPath, h.convertedAt]));
+    for (const path of fresh) {
+      const convertedAt = previouslyConverted.get(path);
+      if (convertedAt) {
+        toast.info(
+          t("toast.duplicateFile", {
+            file: path.split(/[\\/]/).pop() ?? path,
+            date: new Date(convertedAt).toLocaleDateString(locale),
+          }),
+        );
+      }
+    }
+
     setEntries((prev) => [
       ...prev,
       ...fresh.map<QueueEntry>((path) => ({
@@ -165,7 +183,7 @@ export default function App() {
           toast.error(`${path.split(/[\\/]/).pop()}: ${message}`);
         });
     }
-  }, [t]);
+  }, [t, history, locale]);
 
   const setTargetFormat = useCallback((id: string, targetFormat: MapFormat) => {
     const entry = entriesRef.current.find((e) => e.id === id);
@@ -206,6 +224,21 @@ export default function App() {
     };
   }, [addPaths]);
 
+  // Files opened via "open with" / double-click: on first launch (this
+  // instance's own argv) and on later ones (forwarded from the single
+  // running instance -- see get_launch_files/file-opened on the Rust side).
+  useEffect(() => {
+    void getLaunchFiles().then((paths) => {
+      if (paths.length > 0) void addPaths(paths);
+    });
+    const unlisten = listen<string[]>("file-opened", (event) => {
+      void addPaths(event.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [addPaths]);
+
   const browseFiles = useCallback(async () => {
     const paths = await pickMapFiles();
     void addPaths(paths);
@@ -232,6 +265,30 @@ export default function App() {
   const saveOverrides = useCallback((id: string, overrides: MetadataOverrides) => {
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, overrides } : e)));
   }, []);
+
+  const applyBatchTitleReplace = useCallback(
+    (find: string, replace: string) => {
+      const changed = entriesRef.current.filter((e) => {
+        if (e.status !== "ready" && e.status !== "error") return false;
+        const currentTitle = e.overrides?.title ?? e.preview?.title ?? "";
+        return currentTitle.includes(find);
+      }).length;
+
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.status !== "ready" && e.status !== "error") return e;
+          const currentTitle = e.overrides?.title ?? e.preview?.title ?? "";
+          if (!currentTitle.includes(find)) return e;
+          return {
+            ...e,
+            overrides: { ...e.overrides, title: currentTitle.split(find).join(replace) },
+          };
+        }),
+      );
+      if (changed > 0) toast.success(tn("toast.batchEditApplied", changed));
+    },
+    [tn],
+  );
 
   const exportAll = useCallback(async () => {
     const donePaths = entriesRef.current
@@ -316,6 +373,47 @@ export default function App() {
     const pending = entriesRef.current.filter((e) => e.status === "ready" || e.status === "error");
     void convertEntries(pending);
   }, [convertEntries]);
+
+  const convertToAllFormats = useCallback(
+    async (id: string) => {
+      const entry = entriesRef.current.find((e) => e.id === id);
+      if (!entry) return;
+      const source = sourceFormatFromPath(entry.path);
+      const targets = MAP_FORMATS.filter((f) => f !== source);
+
+      const results = await Promise.allSettled(
+        targets.map((format) => convertMapFile(entry.path, outputDir, format, entry.overrides)),
+      );
+
+      let successCount = 0;
+      for (const result of results) {
+        if (result.status !== "fulfilled") continue;
+        successCount++;
+        const outcome = result.value;
+        setHistory(
+          appendHistory({
+            id: crypto.randomUUID(),
+            title: outcome.title,
+            inputPath: entry.path,
+            outputPath: outcome.outputPath,
+            noteCount: outcome.noteCount,
+            quantumNoteCount: outcome.quantumNoteCount,
+            durationMs: outcome.durationMs,
+            convertedAt: new Date().toISOString(),
+          }),
+        );
+      }
+
+      if (successCount === targets.length) {
+        toast.success(t("toast.allFormatsDone", { n: successCount }));
+      } else if (successCount > 0) {
+        toast.error(t("toast.allFormatsPartial", { ok: successCount, total: targets.length }));
+      } else {
+        toast.error(t("toast.allFormatsFailed"));
+      }
+    },
+    [outputDir, t],
+  );
 
   const retryOne = useCallback(
     (id: string) => {
@@ -516,6 +614,7 @@ export default function App() {
                 onTogglePlay={togglePlay}
                 onEdit={setEditingId}
                 onTargetFormatChange={setTargetFormat}
+                onConvertToAllFormats={convertToAllFormats}
               />
             ))}
           </ul>
@@ -534,6 +633,17 @@ export default function App() {
             <SessionStats entries={entries} />
           </p>
           <div className="flex items-center gap-2">
+            {pendingCount > 1 && (
+              <button
+                type="button"
+                onClick={() => setShowBatchEdit(true)}
+                title={t("footer.batchEdit.tooltip")}
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-[rgb(var(--ink)/0.7)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink))]"
+              >
+                <IconPencil className="h-4 w-4" />
+                {t("footer.batchEdit")}
+              </button>
+            )}
             {doneCount > 0 && (
               <button
                 type="button"
@@ -577,6 +687,14 @@ export default function App() {
             />
           );
         })()}
+
+      {showBatchEdit && (
+        <BatchEditPanel
+          entries={entries.filter((e) => e.status === "ready" || e.status === "error")}
+          onApply={applyBatchTitleReplace}
+          onClose={() => setShowBatchEdit(false)}
+        />
+      )}
 
       {showHistory && (
         <HistoryPanel

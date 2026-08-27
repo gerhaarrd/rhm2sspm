@@ -35,6 +35,7 @@ export function MetadataEditor({
   const [customDifficultyName, setCustomDifficultyName] = useState(
     current?.customDifficultyName ?? preview.customDifficultyName,
   );
+  const [timeOffsetMs, setTimeOffsetMs] = useState(current?.timeOffsetMs ?? 0);
 
   const save = () => {
     onSave({
@@ -46,6 +47,7 @@ export function MetadataEditor({
         .filter(Boolean),
       difficulty,
       customDifficultyName: customDifficultyName.trim(),
+      timeOffsetMs,
     });
     onClose();
   };
@@ -111,6 +113,16 @@ export function MetadataEditor({
               />
             </Field>
           </div>
+          <Field label={t("editor.timeOffsetMs")}>
+            <input
+              type="number"
+              step={10}
+              className={inputClass}
+              placeholder="0"
+              value={timeOffsetMs}
+              onChange={(e) => setTimeOffsetMs(Number(e.target.value) || 0)}
+            />
+          </Field>
         </div>
 
         <div className="mt-4 flex justify-end gap-2">

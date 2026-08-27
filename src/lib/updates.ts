@@ -7,11 +7,12 @@ export type UpdateCheckResult =
   | { kind: "available"; version: string; install: () => Promise<void> };
 
 /**
- * Checks for an update via the `updater` plugin. Until `plugins.updater`
- * in tauri.conf.json has a real signing key and release endpoint (see
- * docs/auto-update.md), this always resolves to `not-configured` --
- * the plugin itself reports that cleanly rather than throwing, so
- * there's nothing unsafe about calling it now.
+ * Checks for an update via the `updater` plugin. `plugins.updater` in
+ * tauri.conf.json has a real signing key and points at this repo's
+ * GitHub releases (see docs/auto-update.md) -- but until a release with
+ * a signed `latest.json` is actually published, the endpoint 404s and
+ * this falls back to `not-configured`, same as it would for a genuine
+ * network error. Both read the same way to the user either way.
  */
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   try {

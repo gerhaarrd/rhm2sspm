@@ -1,84 +1,41 @@
-# Ativando auto-update
+# Auto-update
 
-O código já está todo em vigor (plugins `updater`/`process` registrados, permissões
-concedidas, botão "verificar atualizações" no header, fluxo de
-download+instalação+relaunch em [`src/lib/updates.ts`](../src/lib/updates.ts)).
-`tauri.conf.json` já tem um bloco `plugins.updater` com `pubkey`/`endpoints`
-vazios — **necessário**: sem esse bloco (mesmo vazio) o plugin entra em pânico
-no arranque em vez de degradar graciosamente. Com ele vazio, o botão sempre
-mostra "atualizações não configuradas", o que é esperado e seguro.
+Tudo já está configurado — código, `tauri.conf.json` (pubkey + endpoint reais),
+e `release.yml` (assina o build e gera o `latest.json` que o app consulta).
+Falta um passo, que só você pode fazer: cadastrar a chave privada como secret
+do repositório no GitHub.
 
-Falta, nessa ordem:
+## O que falta: cadastrar os secrets
 
-## 1. Repositório git com remoto no GitHub
+Vá em **Settings → Secrets and variables → Actions → New repository secret**
+no repositório e crie dois secrets:
 
-Este diretório ainda não é um repositório git. Para publicar releases,
-precisa de `git init`, um repositório no GitHub, e o código enviado (`git push`).
+- `TAURI_SIGNING_PRIVATE_KEY` — conteúdo do arquivo `.key` gerado (veja abaixo)
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — deixe vazio (a chave foi gerada sem senha)
 
-## 2. Par de chaves de assinatura
+A chave privada foi gerada nesta sessão e entregue a você fora do repositório
+(nunca foi commitada). Se você não guardou o valor, gere uma nova:
 
 ```bash
 npx tauri signer generate -w ~/.tauri/rhm2sspm.key
 ```
 
-Isso gera uma chave privada (fica em `~/.tauri/rhm2sspm.key`, protegida por
-senha — **nunca commitar**) e imprime a chave pública. A privada vai como
-secret do GitHub Actions (`TAURI_SIGNING_PRIVATE_KEY` e
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`); a pública entra no
-`tauri.conf.json`:
+Isso vai gerar um par de chaves novo. Se fizer isso, também precisa atualizar
+o `pubkey` em [`tauri.conf.json`](../src-tauri/tauri.conf.json) com a nova
+chave pública impressa no terminal (a privada é só pro secret do GitHub,
+nunca commitar).
 
-```jsonc
-{
-  "plugins": {
-    "updater": {
-      "pubkey": "<chave pública gerada acima>",
-      "endpoints": [
-        "https://github.com/<usuario>/<repo>/releases/latest/download/latest.json"
-      ]
-    }
-  }
-}
-```
+## Depois de cadastrar os secrets
 
-## 3. Pipeline de release (GitHub Actions)
+Um release normal (`git tag vX.Y.Z && git push origin vX.Y.Z`) já vai:
 
-A [`tauri-action`](https://github.com/tauri-apps/tauri-action) oficial builda,
-assina e publica pra Linux e Windows num único job, disparado por tag
-(`v*`). Ela também gera o `latest.json` que os endpoints acima esperam.
-Exemplo mínimo de `.github/workflows/release.yml`:
+1. Buildar e assinar os instaladores de Windows e Linux
+2. Gerar e anexar o `latest.json` na release
+3. Deixar tudo pronto pro botão "verificar atualizações" do app encontrar
 
-```yaml
-name: release
-on:
-  push:
-    tags: ["v*"]
+## Testando
 
-jobs:
-  release:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm ci
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "rhm2sspm ${{ github.ref_name }}"
-          includeUpdaterJson: true
-```
-
-## 4. Testar
-
-Depois de um primeiro release publicado com a config acima já presente, sobe
-uma versão nova (`version` no `tauri.conf.json` + nova tag) e o botão de
-verificar atualizações do app anterior deve encontrar e instalar.
+Depois do primeiro release assinado e **publicado** (drafts não contam pro
+updater), sobe a versão (`version` no `tauri.conf.json` + nova tag) e o botão
+de verificar atualizações de uma instalação anterior deve encontrar e
+instalar a nova.

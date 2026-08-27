@@ -2,7 +2,15 @@
 
 Converts map files between [Rhythia](https://rhythia.com) `.rhm`/`.phxm`, [Nova](https://pyrama.itch.io/nova) `.npk`, and [Sound Space+](https://ssplus.co) `.sspm` — any format to any other. Timing offsets and off-grid ("quantum") notes are preserved exactly; nothing gets rounded or silently dropped.
 
-A native desktop app (Windows + Linux) with drag-and-drop, batch conversion, metadata editing, and history — plus a CLI and a Rust library for anyone who wants to build on top of the conversion logic directly.
+A native desktop app (Windows + Linux) with drag-and-drop, batch conversion, metadata editing, history, and auto-update — plus a CLI and a Rust library for anyone who wants to build on top of the conversion logic directly.
+
+Desktop app highlights:
+- Pick the output format per file (any of the four), or convert one file to all three other formats at once
+- Batch find-and-replace across queued titles (e.g. strip `ft. X`)
+- Shift a chart's notes by N ms to fix audio desync
+- Warns if a file was already converted before
+- Double-click a `.rhm`/`.phxm`/`.npk`/`.sspm` file (or "Open with…") to launch straight into the queue
+- Every write is re-read and verified before being reported as done
 
 ## Install (desktop app)
 
@@ -38,12 +46,14 @@ Arguments:
   <INPUTS>...  .rhm/.phxm/.npk/.sspm files, or directories to scan recursively
 
 Options:
-  -o, --output <OUTPUT>      Write converted files here instead of next to each input
-  -t, --to <rhm|phxm|npk|sspm>  Target format (default: .sspm, or .rhm for .sspm inputs)
-  -v, --verbose               Print per-map details (note count, quantum notes, duration, media)
+  -o, --output <OUTPUT>        Write converted files here instead of next to each input
+  -t, --to <rhm|phxm|npk|sspm> Target format (default: .sspm, or .rhm for .sspm inputs)
+      --check                 Validate every conversion without writing anything to disk
+      --offset-ms <MS>        Shift every note and timing point by this many ms
+  -v, --verbose                Print per-map details (note count, quantum notes, duration, media)
 ```
 
-Defaults to whichever direction matches each input file's extension (`.sspm` in, `.rhm` out; anything else in, `.sspm` out); pass `--to` to convert to any of the four formats explicitly, e.g. `rhm2sspm song.rhm --to phxm`. Mixed batches and directories work.
+Defaults to whichever direction matches each input file's extension (`.sspm` in, `.rhm` out; anything else in, `.sspm` out); pass `--to` to convert to any of the four formats explicitly, e.g. `rhm2sspm song.rhm --to phxm`. Mixed batches and directories are converted in parallel, and every output is re-parsed to verify it before being reported as written.
 
 ## Building from source
 

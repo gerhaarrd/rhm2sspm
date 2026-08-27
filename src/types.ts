@@ -42,6 +42,8 @@ export interface MetadataOverrides {
   mappers?: string[];
   difficulty?: number;
   customDifficultyName?: string;
+  /** Shifts every note and timing point by this many ms (negative = earlier). */
+  timeOffsetMs?: number;
 }
 
 export interface HistoryEntry {
