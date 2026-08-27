@@ -396,7 +396,7 @@ export default function App() {
             type="button"
             onClick={cycleLocale}
             title={t("locale.tooltip", { locale: LOCALE_SHORT[locale] })}
-            className="flex items-center gap-1 rounded-lg px-2 py-2 text-xs font-semibold text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
           >
             <IconGlobe className="h-3.5 w-3.5" />
             {LOCALE_SHORT[locale]}
@@ -416,7 +416,7 @@ export default function App() {
             type="button"
             onClick={() => setShowHistory(true)}
             title={t("header.history.tooltip")}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
           >
             <IconClock className="h-3.5 w-3.5" />
             {t("header.history")}
@@ -425,7 +425,7 @@ export default function App() {
             type="button"
             onClick={chooseOutputDir}
             title={outputDir ?? t("header.outputDir.tooltip")}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
           >
             <IconFolder className="h-3.5 w-3.5" />
             <span className="max-w-40 truncate">{outputDir ?? t("header.outputDir.default")}</span>
@@ -434,7 +434,7 @@ export default function App() {
             type="button"
             onClick={browseFiles}
             title={t("header.add.tooltip")}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
           >
             <IconUpload className="h-3.5 w-3.5" />
             {t("header.add")}

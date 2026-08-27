@@ -10,7 +10,6 @@ import {
   IconCheck,
   IconClock,
   IconExternal,
-  IconGrid,
   IconMusic,
   IconPause,
   IconPencil,
@@ -178,11 +177,6 @@ export function QueueItem({
               <IconClock className="h-3 w-3" /> {formatDuration(preview.durationMs)}
             </Badge>
             <Badge>{t("queueItem.notes", { n: preview.noteCount })}</Badge>
-            {preview.quantumNoteCount > 0 && (
-              <Badge className="bg-amber-500/15 text-amber-300 ring-amber-500/30">
-                <IconGrid className="h-3 w-3" /> {t("queueItem.offGrid", { n: preview.quantumNoteCount })}
-              </Badge>
-            )}
             {preview.timingPointsCount > 0 && (
               <Badge>{t("queueItem.timingPoints", { n: preview.timingPointsCount })}</Badge>
             )}
