@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "rhm2sspm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anstream 0.6.21",
  "anyhow",
@@ -3198,7 +3198,7 @@ dependencies = [
 
 [[package]]
 name = "rhm2sspm-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "rhmsspm-core",
@@ -3218,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "rhmsspm-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "byteorder",
  "image",
