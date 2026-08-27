@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Theme tokens: --ink is the primary content color (used at various
+   alphas throughout via rgb(var(--ink)/N)), --bg the page background,
+   --elevated a raised surface (panels, dropdown menus). Dark is the
+   default look; "system" (no data-theme attribute) additionally follows
+   the OS preference; an explicit choice always wins via [data-theme]. */
+:root {
+  --ink: 255 255 255;
+  --bg: 10 14 23;
+  --elevated: 15 21 36;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    --ink: 15 23 42;
+    --bg: 248 250 252;
+    --elevated: 255 255 255;
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  --ink: 15 23 42;
+  --bg: 248 250 252;
+  --elevated: 255 255 255;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --ink: 255 255 255;
+  --bg: 10 14 23;
+  --elevated: 15 21 36;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--ink) / 0.12);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--ink) / 0.2);
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.animate-shimmer {
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}

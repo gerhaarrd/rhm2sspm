@@ -1,0 +1,51 @@
+import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import type { ConversionOutcome, MapPreview, MetadataOverrides } from "../types";
+
+export function previewMap(path: string): Promise<MapPreview> {
+  return invoke("preview_map", { path });
+}
+
+export function convertMapFile(
+  inputPath: string,
+  outputDir: string | null,
+  overrides: MetadataOverrides | null,
+): Promise<ConversionOutcome> {
+  return invoke("convert_map_file", { inputPath, outputDir, overrides });
+}
+
+/** Expands a mix of file and directory paths into a flat list of `.rhm`/`.sspm` files. */
+export function resolveMapPaths(paths: string[]): Promise<string[]> {
+  return invoke("resolve_map_paths", { paths });
+}
+
+/** Lazily reads and base64-encodes a map's embedded audio for playback. */
+export function getAudioDataUrl(path: string): Promise<string | null> {
+  return invoke("get_audio_data_url", { path });
+}
+
+export async function pickMapFiles(): Promise<string[]> {
+  const result = await open({
+    multiple: true,
+    filters: [{ name: "Mapa Rhythia / Sound Space+", extensions: ["rhm", "sspm"] }],
+  });
+  if (!result) return [];
+  return Array.isArray(result) ? result : [result];
+}
+
+export async function pickOutputFolder(): Promise<string | null> {
+  const result = await open({ directory: true, multiple: false });
+  if (!result) return null;
+  return Array.isArray(result) ? result[0] : result;
+}
+
+export function exportZip(paths: string[], dest: string): Promise<void> {
+  return invoke("export_zip", { paths, dest });
+}
+
+export async function pickZipDestination(): Promise<string | null> {
+  return save({
+    defaultPath: "mapas-convertidos.zip",
+    filters: [{ name: "Arquivo ZIP", extensions: ["zip"] }],
+  });
+}
