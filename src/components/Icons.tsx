@@ -221,3 +221,103 @@ export function IconLayers({ className }: IconProps) {
     </svg>
   );
 }
+
+export function IconGrid3({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <g className={base}>
+        <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+        <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+        <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+        <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+      </g>
+    </svg>
+  );
+}
+
+export function IconList({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <g className={base}>
+        <path d="M8 6h12" />
+        <path d="M8 12h12" />
+        <path d="M8 18h12" />
+        <path d="M4 6h.01" />
+        <path d="M4 12h.01" />
+        <path d="M4 18h.01" />
+      </g>
+    </svg>
+  );
+}
+
+export function IconMore({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round">
+      <g className={base}>
+        <path d="M5 12h.01" />
+        <path d="M12 12h.01" />
+        <path d="M19 12h.01" />
+      </g>
+    </svg>
+  );
+}
+
+export function IconCompare({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <g className={base}>
+        <path d="M9 4v16" />
+        <path d="M15 4v16" />
+        <path d="M4 9h5" />
+        <path d="M15 9h5" />
+        <path d="M4 15h5" />
+        <path d="M15 15h5" />
+      </g>
+    </svg>
+  );
+}
+
+export function IconGamepad({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <g className={base}>
+        <rect x="2.5" y="7.5" width="19" height="10" rx="4" />
+        <path d="M7 10v4" />
+        <path d="M5 12h4" />
+        <path d="M15.5 11.5h.01" />
+        <path d="M18 13.5h.01" />
+      </g>
+    </svg>
+  );
+}
+
+export function IconFileZip({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <g className={base}>
+        <path d="M6 3h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+        <path d="M12 3v3" />
+        <path d="M12 8v2" />
+        <path d="M12 12v2" />
+      </g>
+    </svg>
+  );
+}
+
+export function IconPin({ className, filled }: IconProps & { filled?: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path
+        className={filled ? "fill-current stroke-current" : base}
+        d="M9 4.5h6l-.75 5.5L18 13.5v1.5H6v-1.5l3.75-3.5L9 4.5Z"
+      />
+      <path className={base} d="M12 15v5" />
+    </svg>
+  );
+}

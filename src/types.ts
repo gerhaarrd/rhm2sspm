@@ -46,6 +46,33 @@ export interface MetadataOverrides {
   timeOffsetMs?: number;
 }
 
+export interface BuildInfo {
+  version: string;
+  commit: string;
+}
+
+export interface DetectedGame {
+  name: string;
+  dir: string;
+}
+
+export interface MapSummary {
+  path: string;
+  title: string;
+  mappers: string[];
+  durationMs: number;
+  noteCount: number;
+  quantumNoteCount: number;
+}
+
+export interface CompareReport {
+  a: MapSummary;
+  b: MapSummary;
+  matchingNotes: number;
+  onlyInA: number;
+  onlyInB: number;
+}
+
 export interface HistoryEntry {
   id: string;
   title: string;
@@ -66,4 +93,14 @@ export interface QueueEntry {
   error: string | null;
   overrides: MetadataOverrides | null;
   targetFormat: MapFormat;
+  pinned: boolean;
+}
+
+/** The subset of a `QueueEntry` worth restoring on next launch --
+ * previews/audio/outcomes are re-fetched or re-run fresh instead. */
+export interface PersistedQueueEntry {
+  path: string;
+  overrides: MetadataOverrides | null;
+  targetFormat: MapFormat;
+  pinned: boolean;
 }

@@ -15,6 +15,7 @@ import {
   IconMusic,
   IconPause,
   IconPencil,
+  IconPin,
   IconPlay,
   IconRefresh,
   IconSpinner,
@@ -54,6 +55,7 @@ export function QueueItem({
   onEdit,
   onTargetFormatChange,
   onConvertToAllFormats,
+  onTogglePin,
 }: {
   entry: QueueEntry;
   isSelected: boolean;
@@ -66,9 +68,10 @@ export function QueueItem({
   onEdit: (id: string) => void;
   onTargetFormatChange: (id: string, format: MapFormat) => void;
   onConvertToAllFormats: (id: string) => Promise<void>;
+  onTogglePin: (id: string) => void;
 }) {
   const { t, tn } = useTranslation();
-  const { preview, outcome, status, error, overrides, targetFormat } = entry;
+  const { preview, outcome, status, error, overrides, targetFormat, pinned } = entry;
   const fileLabel = entry.path.split(/[\\/]/).pop() ?? entry.path;
   const sourceFormat = sourceFormatFromPath(entry.path);
   const canPickFormat = status === "ready" || status === "error";
@@ -121,9 +124,9 @@ export function QueueItem({
   return (
     <li
       onClick={() => onSelect(entry.id)}
-      className={`group flex items-center gap-4 rounded-2xl bg-[rgb(var(--ink)/0.03)] p-3 ring-1 transition hover:bg-[rgb(var(--ink)/0.05)] ${
-        isSelected ? "ring-blue-500/50" : "ring-[rgb(var(--ink)/0.06)]"
-      }`}
+      className={`group flex items-center gap-4 rounded-2xl p-3 ring-1 transition hover:bg-[rgb(var(--ink)/0.05)] ${
+        pinned ? "bg-amber-500/[0.04]" : "bg-[rgb(var(--ink)/0.03)]"
+      } ${isSelected ? "ring-blue-500/50" : pinned ? "ring-amber-500/25" : "ring-[rgb(var(--ink)/0.06)]"}`}
     >
       <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-blue-600/40 to-indigo-500/40 ring-1 ring-[rgb(var(--ink)/0.1)]">
         {preview?.coverDataUrl ? (
@@ -205,6 +208,21 @@ export function QueueItem({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onTogglePin(entry.id);
+          }}
+          title={pinned ? t("queueItem.unpin") : t("queueItem.pin")}
+          className={`rounded-lg p-2 transition hover:bg-[rgb(var(--ink)/0.1)] ${
+            pinned
+              ? "text-amber-400"
+              : "text-[rgb(var(--ink)/0.3)] opacity-0 group-hover:opacity-100"
+          }`}
+        >
+          <IconPin className="h-4 w-4" filled={pinned} />
+        </button>
         <select
           value={targetFormat}
           disabled={!canPickFormat}

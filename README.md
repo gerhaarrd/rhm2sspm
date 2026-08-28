@@ -2,15 +2,20 @@
 
 Converts map files between [Rhythia](https://rhythia.com) `.rhm`/`.phxm`, [Nova](https://pyrama.itch.io/nova) `.npk`, and [Sound Space+](https://ssplus.co) `.sspm` — any format to any other. Timing offsets and off-grid ("quantum") notes are preserved exactly; nothing gets rounded or silently dropped.
 
-A native desktop app (Windows + Linux) with drag-and-drop, batch conversion, metadata editing, history, and auto-update — plus a CLI and a Rust library for anyone who wants to build on top of the conversion logic directly.
+A native desktop app (Windows + Linux) with drag-and-drop, batch conversion, metadata editing, history, and auto-update — plus a CLI and a Rust library for anyone who wants to build on top of the conversion logic directly. Available in English, Portuguese and Spanish.
 
 Desktop app highlights:
 - Pick the output format per file (any of the four), or convert one file to all three other formats at once
+- List/grid view, pinning, and the queue survives closing and reopening the app
 - Batch find-and-replace across queued titles (e.g. strip `ft. X`)
 - Shift a chart's notes by N ms to fix audio desync
 - Warns if a file was already converted before
-- Double-click a `.rhm`/`.phxm`/`.npk`/`.sspm` file (or "Open with…") to launch straight into the queue
+- Double-click a `.rhm`/`.phxm`/`.npk`/`.sspm` file (or "Open with…") to launch straight into the queue, or drop in a `.zip` pack to queue everything inside it
+- Browse maps already installed by a detected Rhythia/Nova install and queue them directly
+- Compare two files of "the same" map (e.g. two exports) to see exactly how their notes differ
+- Export bundles a `README.txt` describing the pack alongside the maps
 - Every write is re-read and verified before being reported as done
+- Shows what's new after an auto-update installs
 
 ## Install (desktop app)
 

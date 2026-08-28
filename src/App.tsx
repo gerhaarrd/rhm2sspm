@@ -1,18 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   convertMapFile,
   exportZip,
+  extractZipMaps,
+  getBuildInfo,
   getLaunchFiles,
   pickMapFiles,
   pickOutputFolder,
   pickZipDestination,
+  pickZipToImport,
   previewMap,
   resolveMapPaths,
 } from "./lib/backend";
-import { appendHistory, clearHistory, loadHistory, loadOutputDir, saveOutputDir } from "./lib/storage";
+import {
+  appendHistory,
+  checkAndUpdateLastSeenVersion,
+  clearHistory,
+  hasSeenOnboarding,
+  loadHistory,
+  loadOutputDir,
+  loadQueue,
+  loadRecentOutputDirs,
+  loadViewMode,
+  markOnboardingSeen,
+  saveOutputDir,
+  saveQueue,
+  saveViewMode,
+} from "./lib/storage";
 import { defaultTargetFormat, MAP_FORMATS, sourceFormatFromPath } from "./lib/mapFormat";
 import { applyTheme, loadTheme, saveTheme, type ThemeMode } from "./lib/theme";
 import type { Locale } from "./lib/i18n";
@@ -23,21 +41,31 @@ import { toast } from "./lib/toast";
 import { Dropzone } from "./components/Dropzone";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { BatchEditPanel } from "./components/BatchEditPanel";
+import { ChangelogPopup } from "./components/ChangelogPopup";
+import { ComparePanel } from "./components/ComparePanel";
+import { InstalledGamesPanel } from "./components/InstalledGamesPanel";
+import { Onboarding } from "./components/Onboarding";
+import { CHANGELOG } from "./lib/changelog";
 import { MetadataEditor } from "./components/MetadataEditor";
 import { QueueItem } from "./components/QueueItem";
-import { QueueToolbar, type SortKey } from "./components/QueueToolbar";
+import { QueueItemGrid } from "./components/QueueItemGrid";
+import { QueueToolbar, type SortKey, type ViewMode } from "./components/QueueToolbar";
 import { SessionStats } from "./components/SessionStats";
 import { Toaster } from "./components/Toaster";
 import {
   IconArchive,
   IconBolt,
   IconClock,
+  IconCompare,
   IconDownload,
+  IconFileZip,
   IconFolder,
+  IconGamepad,
   IconGlobe,
   IconGrid,
   IconMonitor,
   IconMoon,
+  IconMore,
   IconPencil,
   IconSpinner,
   IconSun,
@@ -51,8 +79,8 @@ const THEME_ICON: Record<ThemeMode, typeof IconSun> = {
   light: IconSun,
   system: IconMonitor,
 };
-const LOCALE_CYCLE: Locale[] = ["pt-BR", "en"];
-const LOCALE_SHORT: Record<Locale, string> = { "pt-BR": "PT", en: "EN" };
+const LOCALE_CYCLE: Locale[] = ["pt-BR", "en", "es"];
+const LOCALE_SHORT: Record<Locale, string> = { "pt-BR": "PT", en: "EN", es: "ES" };
 
 function idFor(path: string) {
   return path;
@@ -83,6 +111,16 @@ export default function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => loadTheme());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showBatchEdit, setShowBatchEdit] = useState(false);
+  const [showRecentDirs, setShowRecentDirs] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => loadViewMode());
+  const [showOnboarding, setShowOnboarding] = useState(() => !hasSeenOnboarding());
+  const [changelogToShow, setChangelogToShow] = useState<{ version: string; items: string[] } | null>(
+    null,
+  );
+  const [showCompare, setShowCompare] = useState(false);
+  const [showInstalledGames, setShowInstalledGames] = useState(false);
+  const [buildInfo, setBuildInfo] = useState<{ version: string; commit: string } | null>(null);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -162,6 +200,7 @@ export default function App() {
         error: null,
         overrides: null,
         targetFormat: defaultTargetFormat(sourceFormatFromPath(path)),
+        pinned: false,
       })),
     ]);
 
@@ -208,6 +247,10 @@ export default function App() {
       });
   }, []);
 
+  const togglePinned = useCallback((id: string) => {
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, pinned: !e.pinned } : e)));
+  }, []);
+
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent((event) => {
       if (event.payload.type === "over") {
@@ -239,10 +282,104 @@ export default function App() {
     };
   }, [addPaths]);
 
+  // Restore the queue from the last session, once, on mount. Only the
+  // path + overrides + target format + pinned state are persisted --
+  // preview/audio/outcome are re-fetched/re-run fresh here, same as a
+  // freshly-dropped file.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+
+    const persisted = loadQueue();
+    if (persisted.length === 0) return;
+
+    setEntries(
+      persisted.map((p) => ({
+        id: idFor(p.path),
+        path: p.path,
+        status: "loading",
+        preview: null,
+        outcome: null,
+        error: null,
+        overrides: p.overrides,
+        targetFormat: p.targetFormat,
+        pinned: p.pinned,
+      })),
+    );
+
+    for (const p of persisted) {
+      previewMap(p.path, p.targetFormat)
+        .then((preview) => {
+          setEntries((prev) =>
+            prev.map((e) => (e.id === idFor(p.path) ? { ...e, status: "ready", preview } : e)),
+          );
+        })
+        .catch((err) => {
+          const message = String(err);
+          setEntries((prev) =>
+            prev.map((e) =>
+              e.id === idFor(p.path) ? { ...e, status: "error", error: message } : e,
+            ),
+          );
+        });
+    }
+  }, []);
+
+  useEffect(() => {
+    void getBuildInfo().then(setBuildInfo);
+  }, []);
+
+  // Show what's new once, if this launch is running a newer version than
+  // last time (typically right after an auto-update relaunches) -- never
+  // on a fresh install, since there's no "previous version" to compare.
+  useEffect(() => {
+    void getVersion().then((version) => {
+      const previous = checkAndUpdateLastSeenVersion(version);
+      if (!previous || previous === version) return;
+      const changelogLocale = locale === "pt-BR" ? "pt" : locale === "es" ? "es" : "en";
+      const items = CHANGELOG[version]?.[changelogLocale];
+      if (items) setChangelogToShow({ version, items });
+    });
+  }, [locale]);
+
+  // Persist the queue (path + overrides + target format + pinned) after
+  // every change, so it survives closing and reopening the app.
+  useEffect(() => {
+    saveQueue(
+      entries.map((e) => ({
+        path: e.path,
+        overrides: e.overrides,
+        targetFormat: e.targetFormat,
+        pinned: e.pinned,
+      })),
+    );
+  }, [entries]);
+
   const browseFiles = useCallback(async () => {
     const paths = await pickMapFiles();
     void addPaths(paths);
   }, [addPaths]);
+
+  const importZip = useCallback(async () => {
+    const zipPath = await pickZipToImport();
+    if (!zipPath) return;
+    try {
+      const paths = await extractZipMaps(zipPath);
+      if (paths.length === 0) {
+        toast.info(t("toast.zipImportEmpty"));
+        return;
+      }
+      void addPaths(paths);
+    } catch (err) {
+      toast.error(t("toast.zipImportFailed", { error: String(err) }));
+    }
+  }, [addPaths, t]);
+
+  const changeViewMode = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    saveViewMode(mode);
+  }, []);
 
   const chooseOutputDir = useCallback(async () => {
     const dir = await pickOutputFolder();
@@ -250,6 +387,12 @@ export default function App() {
       setOutputDir(dir);
       saveOutputDir(dir);
     }
+  }, []);
+
+  const selectRecentOutputDir = useCallback((dir: string) => {
+    setOutputDir(dir);
+    saveOutputDir(dir);
+    setShowRecentDirs(false);
   }, []);
 
   const removeEntry = useCallback((id: string) => {
@@ -291,19 +434,28 @@ export default function App() {
   );
 
   const exportAll = useCallback(async () => {
-    const donePaths = entriesRef.current
-      .filter((e) => e.status === "done")
-      .map((e) => e.outcome?.outputPath)
-      .filter((p): p is string => !!p);
-    if (donePaths.length === 0) return;
+    const done = entriesRef.current.filter((e) => e.status === "done" && e.outcome);
+    if (done.length === 0) return;
 
     const dest = await pickZipDestination();
     if (!dest) return;
 
+    const readme = [
+      t("pack.readme.header", { n: done.length }),
+      "",
+      ...done.map((e) => `- ${e.outcome!.title} (${e.targetFormat})`),
+      "",
+      t("pack.readme.footer"),
+    ].join("\n");
+
     setIsExporting(true);
     try {
-      await exportZip(donePaths, dest);
-      toast.success(tn("toast.zipExported", donePaths.length));
+      await exportZip(
+        done.map((e) => e.outcome!.outputPath),
+        dest,
+        readme,
+      );
+      toast.success(tn("toast.zipExported", done.length));
     } catch (err) {
       toast.error(t("toast.zipExportFailed", { error: String(err) }));
     } finally {
@@ -496,6 +648,9 @@ export default function App() {
       return sortAsc ? cmp : -cmp;
     });
 
+    // Pinned entries always float to the top, regardless of sort key.
+    sorted.sort((a, b) => Number(b.pinned) - Number(a.pinned));
+
     return sorted;
   }, [entries, filterText, sortKey, sortAsc]);
 
@@ -515,7 +670,16 @@ export default function App() {
             <IconGrid className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold leading-tight">rhm2sspm</h1>
+            <h1
+              className="text-sm font-semibold leading-tight"
+              title={
+                buildInfo
+                  ? t("app.buildInfo", { version: buildInfo.version, commit: buildInfo.commit })
+                  : undefined
+              }
+            >
+              rhm2sspm
+            </h1>
             <p className="text-xs leading-tight text-[rgb(var(--ink)/0.4)]">{t("app.subtitle")}</p>
           </div>
         </div>
@@ -550,15 +714,48 @@ export default function App() {
             <IconClock className="h-3.5 w-3.5" />
             {t("header.history")}
           </button>
-          <button
-            type="button"
-            onClick={chooseOutputDir}
-            title={outputDir ?? t("header.outputDir.tooltip")}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
-          >
-            <IconFolder className="h-3.5 w-3.5" />
-            <span className="max-w-40 truncate">{outputDir ?? t("header.outputDir.default")}</span>
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={chooseOutputDir}
+              title={outputDir ?? t("header.outputDir.tooltip")}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
+            >
+              <IconFolder className="h-3.5 w-3.5" />
+              <span className="max-w-40 truncate">{outputDir ?? t("header.outputDir.default")}</span>
+            </button>
+            {loadRecentOutputDirs().length > 0 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowRecentDirs((v) => !v);
+                }}
+                title={t("header.outputDir.recent.tooltip")}
+                className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[rgb(var(--elevated))] text-[9px] text-[rgb(var(--ink)/0.5)] ring-1 ring-[rgb(var(--ink)/0.15)] transition hover:text-[rgb(var(--ink)/0.9)]"
+              >
+                ▾
+              </button>
+            )}
+            {showRecentDirs && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setShowRecentDirs(false)} />
+                <div className="absolute right-0 top-full z-40 mt-1 max-w-72 min-w-full rounded-lg bg-[rgb(var(--elevated))] p-1 shadow-2xl ring-1 ring-[rgb(var(--ink)/0.1)]">
+                  {loadRecentOutputDirs().map((dir) => (
+                    <button
+                      key={dir}
+                      type="button"
+                      onClick={() => selectRecentOutputDir(dir)}
+                      className="block w-full truncate rounded-md px-2 py-1.5 text-left text-xs text-[rgb(var(--ink)/0.75)] transition hover:bg-[rgb(var(--ink)/0.08)]"
+                      title={dir}
+                    >
+                      {dir}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           <button
             type="button"
             onClick={browseFiles}
@@ -568,6 +765,56 @@ export default function App() {
             <IconUpload className="h-3.5 w-3.5" />
             {t("header.add")}
           </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowMoreMenu((v) => !v)}
+              title={t("header.more.tooltip")}
+              className="flex items-center justify-center rounded-lg p-2 text-[rgb(var(--ink)/0.6)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink)/0.9)]"
+            >
+              <IconMore className="h-3.5 w-3.5" />
+            </button>
+            {showMoreMenu && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setShowMoreMenu(false)} />
+                <div className="absolute right-0 top-full z-40 mt-1 w-48 rounded-lg bg-[rgb(var(--elevated))] p-1 shadow-2xl ring-1 ring-[rgb(var(--ink)/0.1)]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreMenu(false);
+                      void importZip();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-[rgb(var(--ink)/0.75)] transition hover:bg-[rgb(var(--ink)/0.08)]"
+                  >
+                    <IconFileZip className="h-3.5 w-3.5" />
+                    {t("header.more.importZip")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreMenu(false);
+                      setShowInstalledGames(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-[rgb(var(--ink)/0.75)] transition hover:bg-[rgb(var(--ink)/0.08)]"
+                  >
+                    <IconGamepad className="h-3.5 w-3.5" />
+                    {t("header.more.installedGames")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreMenu(false);
+                      setShowCompare(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-[rgb(var(--ink)/0.75)] transition hover:bg-[rgb(var(--ink)/0.08)]"
+                  >
+                    <IconCompare className="h-3.5 w-3.5" />
+                    {t("header.more.compare")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => void handleCheckForUpdate()}
@@ -593,6 +840,8 @@ export default function App() {
           sortAsc={sortAsc}
           onToggleSortDir={() => setSortAsc((v) => !v)}
           resultCount={visibleEntries.length}
+          viewMode={viewMode}
+          onViewModeChange={changeViewMode}
         />
       )}
 
@@ -600,23 +849,48 @@ export default function App() {
         {entries.length === 0 ? (
           <Dropzone isDragActive={isDragActive} onBrowse={browseFiles} />
         ) : (
-          <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto px-6 py-4">
-            {visibleEntries.map((entry) => (
-              <QueueItem
-                key={entry.id}
-                entry={entry}
-                isSelected={entry.id === selectedId}
-                onSelect={setSelectedId}
-                onRemove={removeEntry}
-                onReveal={(path) => revealItemInDir(path)}
-                onRetry={retryOne}
-                isPlaying={entry.id === playingId}
-                onTogglePlay={togglePlay}
-                onEdit={setEditingId}
-                onTargetFormatChange={setTargetFormat}
-                onConvertToAllFormats={convertToAllFormats}
-              />
-            ))}
+          <ul
+            className={
+              viewMode === "grid"
+                ? "grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3 overflow-y-auto px-6 py-4"
+                : "min-h-0 flex-1 space-y-2 overflow-y-auto px-6 py-4"
+            }
+          >
+            {visibleEntries.map((entry) =>
+              viewMode === "grid" ? (
+                <QueueItemGrid
+                  key={entry.id}
+                  entry={entry}
+                  isSelected={entry.id === selectedId}
+                  onSelect={setSelectedId}
+                  onRemove={removeEntry}
+                  onReveal={(path) => revealItemInDir(path)}
+                  onRetry={retryOne}
+                  isPlaying={entry.id === playingId}
+                  onTogglePlay={togglePlay}
+                  onEdit={setEditingId}
+                  onTargetFormatChange={setTargetFormat}
+                  onConvertToAllFormats={convertToAllFormats}
+                  onTogglePin={togglePinned}
+                />
+              ) : (
+                <QueueItem
+                  key={entry.id}
+                  entry={entry}
+                  isSelected={entry.id === selectedId}
+                  onSelect={setSelectedId}
+                  onRemove={removeEntry}
+                  onReveal={(path) => revealItemInDir(path)}
+                  onRetry={retryOne}
+                  isPlaying={entry.id === playingId}
+                  onTogglePlay={togglePlay}
+                  onEdit={setEditingId}
+                  onTargetFormatChange={setTargetFormat}
+                  onConvertToAllFormats={convertToAllFormats}
+                  onTogglePin={togglePinned}
+                />
+              ),
+            )}
           </ul>
         )}
 
@@ -687,6 +961,32 @@ export default function App() {
             />
           );
         })()}
+
+      {showOnboarding && (
+        <Onboarding
+          onClose={() => {
+            markOnboardingSeen();
+            setShowOnboarding(false);
+          }}
+        />
+      )}
+
+      {showCompare && <ComparePanel onClose={() => setShowCompare(false)} />}
+
+      {showInstalledGames && (
+        <InstalledGamesPanel
+          onImport={(paths) => void addPaths(paths)}
+          onClose={() => setShowInstalledGames(false)}
+        />
+      )}
+
+      {changelogToShow && (
+        <ChangelogPopup
+          version={changelogToShow.version}
+          items={changelogToShow.items}
+          onClose={() => setChangelogToShow(null)}
+        />
+      )}
 
       {showBatchEdit && (
         <BatchEditPanel

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 /// Metadata preview for a queued map, regardless of source/target format:
 /// every format shares the same handful of concepts (title, mappers,
@@ -101,6 +102,91 @@ fn source_format(path: &Path) -> MapFormat {
         .and_then(|e| e.to_str())
         .and_then(MapFormat::from_ext)
         .unwrap_or(MapFormat::Rhm)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MapSummary {
+    path: String,
+    title: String,
+    mappers: Vec<String>,
+    duration_ms: i64,
+    note_count: usize,
+    quantum_note_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompareReport {
+    a: MapSummary,
+    b: MapSummary,
+    /// Notes present (same time + position, within float rounding) in both.
+    matching_notes: usize,
+    /// Notes only `a` has.
+    only_in_a: usize,
+    /// Notes only `b` has.
+    only_in_b: usize,
+}
+
+/// Reads two map files (any supported format, independently) and
+/// reports how their notes and metadata differ -- e.g. to check whether
+/// two exports of "the same" map actually agree, or how much a hand
+/// edit changed.
+#[tauri::command]
+fn compare_maps(path_a: String, path_b: String) -> Result<CompareReport, String> {
+    type NoteKey = (i64, i32, i32);
+    let read_one = |path_str: &str| -> Result<(MapSummary, Vec<NoteKey>), String> {
+        let path = Path::new(path_str);
+        let bytes = std::fs::read(path).map_err(|e| format!("failed to read {path_str}: {e}"))?;
+        let rhm = rhmsspm_core::read_any(source_format(path), &bytes).map_err(|e| e.to_string())?;
+        let quantum_note_count = rhm
+            .map
+            .notes
+            .iter()
+            .filter(|n| !n.is_grid_aligned())
+            .count();
+        // Round to a fixed-point grid dense enough to treat float
+        // rounding as equal, coarse enough that this isn't just an
+        // identity check.
+        let key_notes = rhm
+            .map
+            .notes
+            .iter()
+            .map(|n| {
+                (
+                    n.time,
+                    (n.x * 1000.0).round() as i32,
+                    (n.y * 1000.0).round() as i32,
+                )
+            })
+            .collect();
+        let summary = MapSummary {
+            path: path_str.to_string(),
+            title: rhm.map.title.clone(),
+            mappers: rhm.map.mappers.clone(),
+            duration_ms: rhm.map.duration,
+            note_count: rhm.map.notes.len(),
+            quantum_note_count,
+        };
+        Ok((summary, key_notes))
+    };
+
+    let (a, a_notes) = read_one(&path_a)?;
+    let (b, b_notes) = read_one(&path_b)?;
+
+    let a_set: std::collections::HashSet<_> = a_notes.iter().collect();
+    let b_set: std::collections::HashSet<_> = b_notes.iter().collect();
+    let matching_notes = a_set.intersection(&b_set).count();
+    let only_in_a = a_notes.len() - matching_notes;
+    let only_in_b = b_notes.len() - matching_notes;
+
+    Ok(CompareReport {
+        a,
+        b,
+        matching_notes,
+        only_in_a,
+        only_in_b,
+    })
 }
 
 /// User edits made in the metadata editor before conversion. `None`
@@ -340,6 +426,70 @@ fn convert_map_file(
     })
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildInfo {
+    version: String,
+    /// Short git commit SHA this binary was built from, so a running
+    /// app can be matched back to the exact source/release it came
+    /// from. "unknown" if `git` wasn't available at build time (e.g. a
+    /// source tarball without the `.git` directory).
+    commit: String,
+}
+
+#[tauri::command]
+fn get_build_info(app: tauri::AppHandle) -> BuildInfo {
+    BuildInfo {
+        version: app.package_info().version.to_string(),
+        commit: env!("GIT_COMMIT_SHA").to_string(),
+    }
+}
+
+/// Roots under which each supported game keeps its own map library, one
+/// per platform this app targets. Confirmed against the real games on
+/// Linux; the Windows paths follow Godot's standard per-project
+/// `user://` convention but haven't been verified on an actual Windows
+/// install.
+fn game_map_dirs() -> Vec<(&'static str, PathBuf)> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    #[cfg(target_os = "linux")]
+    if let Ok(home) = std::env::var("HOME") {
+        roots.push(PathBuf::from(home).join(".local/share"));
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        roots.push(PathBuf::from(appdata));
+    }
+
+    let mut candidates = Vec::new();
+    for root in &roots {
+        candidates.push(("Rhythia", root.join("Rhythia/maps")));
+        candidates.push(("Novastra", root.join("Novastra/charts")));
+    }
+    candidates
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DetectedGame {
+    name: String,
+    dir: String,
+}
+
+/// Which of the games this app knows about are actually installed on
+/// this machine, going by whether their map-library folder exists.
+#[tauri::command]
+fn detect_installed_games() -> Vec<DetectedGame> {
+    game_map_dirs()
+        .into_iter()
+        .filter(|(_, dir)| dir.is_dir())
+        .map(|(name, dir)| DetectedGame {
+            name: name.to_string(),
+            dir: dir.display().to_string(),
+        })
+        .collect()
+}
+
 /// Files this process was launched with (double-clicked, or "open
 /// with...") -- read once by the frontend on startup. Argv[0] is the
 /// executable path itself, so only later args are considered.
@@ -351,13 +501,23 @@ fn get_launch_files() -> Vec<String> {
         .collect()
 }
 
-/// Bundles a set of already-converted files into one `.zip`, ready to share.
+/// Bundles a set of already-converted files into one `.zip`, ready to
+/// share. `readme`, when given, is written in as `README.txt` -- the
+/// desktop app uses this for a pack description (map list + a note
+/// about how it was made).
 #[tauri::command]
-fn export_zip(paths: Vec<String>, dest: String) -> Result<(), String> {
+fn export_zip(paths: Vec<String>, dest: String, readme: Option<String>) -> Result<(), String> {
     let file = std::fs::File::create(&dest).map_err(|e| format!("failed to create {dest}: {e}"))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
+
+    if let Some(readme) = readme {
+        zip.start_file("README.txt", options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(readme.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
 
     let mut used_names = std::collections::HashSet::new();
     for path_str in &paths {
@@ -392,6 +552,52 @@ fn export_zip(paths: Vec<String>, dest: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Extracts every convertible map file (`.rhm`/`.phxm`/`.npk`/`.sspm`)
+/// out of a `.zip` (e.g. a downloaded map pack) into a fresh temp
+/// directory, and returns their paths so the caller can queue them like
+/// any other file. Non-map entries in the zip are skipped.
+#[tauri::command]
+fn extract_zip_maps(zip_path: String) -> Result<Vec<String>, String> {
+    let file =
+        std::fs::File::open(&zip_path).map_err(|e| format!("failed to open {zip_path}: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+
+    let stem = Path::new(&zip_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("pack");
+    let dest_dir = std::env::temp_dir().join(format!(
+        "rhm2sspm-{stem}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+
+    let mut extracted = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let Some(entry_path) = entry.enclosed_name() else {
+            continue; // skip anything with a suspicious path (zip-slip)
+        };
+        if !is_convertible_path(&entry_path) {
+            continue;
+        }
+        let file_name = entry_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("map")
+            .to_string();
+        let out_path = dest_dir.join(&file_name);
+        let mut out_file = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
+        extracted.push(out_path.display().to_string());
+    }
+
+    Ok(extracted)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -400,7 +606,7 @@ pub fn run() {
         // is already open), this fires in the *original* process with
         // the new instance's argv instead of a second window opening.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            use tauri::{Emitter, Manager};
+            use tauri::Emitter;
             let paths: Vec<String> = argv
                 .into_iter()
                 .skip(1)
@@ -441,7 +647,11 @@ pub fn run() {
             resolve_map_paths,
             get_audio_data_url,
             export_zip,
-            get_launch_files
+            extract_zip_maps,
+            get_launch_files,
+            get_build_info,
+            detect_installed_games,
+            compare_maps
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
