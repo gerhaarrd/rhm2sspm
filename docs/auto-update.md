@@ -1,9 +1,18 @@
 # Auto-update
 
-Tudo já está configurado — código, `tauri.conf.json` (pubkey + endpoint reais),
-e `release.yml` (assina o build e gera o `latest.json` que o app consulta).
-Falta um passo, que só você pode fazer: cadastrar a chave privada como secret
-do repositório no GitHub.
+Tudo já está configurado — código, `tauri.conf.json` (pubkey + endpoint reais,
+`bundle.createUpdaterArtifacts: true`), e `release.yml` (assina o build e gera
+o `latest.json` que o app consulta). Falta um passo, que só você pode fazer:
+cadastrar a chave privada como secret do repositório no GitHub.
+
+**Nota histórica**: `bundle.createUpdaterArtifacts` precisa estar `true`
+explicitamente -- sem ele o bundler do Tauri pula a assinatura *inteira*
+em silêncio (nenhum log, nenhum erro, o workflow ainda reporta "success"),
+e o `tauri-action` só avisa com um genérico "Signature not found for the
+updater JSON. Skipping upload..." depois. Isso já causou uma release (v0.1.2,
+antes de virar público) sair sem `latest.json` mesmo com os secrets certos e
+uma única rodada limpa do workflow -- não tinha nada a ver com secrets ou
+com o workflow rodar duas vezes pra mesma tag, era só esse campo faltando.
 
 ## O que falta: cadastrar os secrets
 

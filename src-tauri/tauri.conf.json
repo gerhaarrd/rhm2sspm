@@ -36,6 +36,7 @@
   "bundle": {
     "active": true,
     "targets": ["appimage", "deb", "nsis", "msi"],
+    "createUpdaterArtifacts": true,
     "linux": {
       "appimage": {
         "bundleMediaFramework": true
