@@ -3,6 +3,29 @@
  * auto-update finishes and relaunches). Add an entry here when cutting
  * a new release; versions without one just skip the popup silently. */
 export const CHANGELOG: Record<string, { pt: string[]; en: string[]; es: string[] }> = {
+  "0.1.2": {
+    pt: [
+      "Detecta o Rhythia instalado via Steam e deixa escolher quais mapas importar, com capa e prévia",
+      "O mesmo seletor agora vale pra qualquer Rhythia detectado, não só o do Steam",
+      "Corrigido: os menus do cabeçalho (importar .zip, mapas instalados, comparar) às vezes não respondiam ao clique",
+      "Corrigido: capa em WebP não aparecia e sumia ao converter pra .phxm/.npk",
+      "Corrigido: o comparador de arquivos acusava diferença em notas duplicadas que na verdade estavam idênticas",
+    ],
+    en: [
+      "Detects Rhythia installed via Steam and lets you pick which maps to import, with cover art and preview",
+      "The same picker now works for any detected Rhythia, not just the Steam one",
+      "Fixed: header menus (import .zip, installed maps, compare) sometimes not responding to clicks",
+      "Fixed: WebP cover art wasn't showing and got dropped when converting to .phxm/.npk",
+      "Fixed: the file comparison tool flagged duplicate notes as mismatches when they were actually identical",
+    ],
+    es: [
+      "Detecta Rhythia instalado por Steam y permite elegir qué mapas importar, con portada y vista previa",
+      "El mismo selector ahora funciona para cualquier Rhythia detectado, no solo el de Steam",
+      "Corregido: los menús del encabezado (importar .zip, mapas instalados, comparar) a veces no respondían al clic",
+      "Corregido: la portada en WebP no se mostraba y se perdía al convertir a .phxm/.npk",
+      "Corregido: el comparador de archivos marcaba notas duplicadas como diferencias cuando en realidad eran idénticas",
+    ],
+  },
   "0.1.1": {
     pt: [
       "Suporte a .phxm (Rhythia) e .npk (Nova), nos dois sentidos",
