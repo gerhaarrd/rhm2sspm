@@ -27,7 +27,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzQUZEMEUxQ0IzQjc0RTAKUldUZ2REdkw0ZEN2azJZeUg0UmV2YjlDY1M4M1AvY3VuSGlEcjZMdll0ZExiMmdPUGR1SEZqVnAK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlCMkJCMUMxNTZEQkIwMTgKUldRWXNOdFd3YkVybTA5RDd1QnRKZDVqVU1Ta3J0amVLS1dkbVNCaklSVE5OQkdhRzF4bFIrbi8K",
       "endpoints": [
         "https://github.com/gerhaarrd/rhm2sspm/releases/latest/download/latest.json"
       ]
