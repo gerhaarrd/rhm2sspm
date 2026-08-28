@@ -5,6 +5,7 @@ import type {
   CompareReport,
   ConversionOutcome,
   DetectedGame,
+  InstalledMapSummary,
   MapFormat,
   MapPreview,
   MetadataOverrides,
@@ -102,4 +103,29 @@ export function getBuildInfo(): Promise<BuildInfo> {
 
 export function detectInstalledGames(): Promise<DetectedGame[]> {
   return invoke("detect_installed_games");
+}
+
+/** Lists every map cached by the Steam ("Capo") build of Rhythia -- cheap
+ * metadata only, meant for a picker before anything gets materialized. */
+export function listCapoMaps(): Promise<InstalledMapSummary[]> {
+  return invoke("list_capo_maps");
+}
+
+/** Materializes the given Capo maps (`id`s from listCapoMaps) into real
+ * `.rhm` files in a temp folder and returns their paths, ready to queue --
+ * that client doesn't keep `.rhm` files, just loose JSON. */
+export function importCapoMaps(ids: string[]): Promise<string[]> {
+  return invoke("import_capo_maps", { ids });
+}
+
+/** Lists every map file already sitting in a detected game folder (e.g.
+ * the Godot Rhythia client's `maps/` dir), for the same picker. */
+export function listFolderMaps(dir: string): Promise<InstalledMapSummary[]> {
+  return invoke("list_folder_maps", { dir });
+}
+
+/** Fetches one Capo map's cover thumbnail lazily -- listCapoMaps leaves
+ * this out since generating it costs real I/O per map. */
+export function getCapoMapCover(id: string): Promise<string | null> {
+  return invoke("get_capo_map_cover", { id });
 }

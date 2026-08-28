@@ -88,6 +88,16 @@ fn cover_data_url(cover: &[u8]) -> Option<String> {
         .then(|| format!("data:{};base64,{}", cover_mime(cover), BASE64.encode(cover)))
 }
 
+/// A small (96px) JPEG thumbnail as a data URL, for cover art in a list
+/// of many maps at once -- real cover files run several MB each (some
+/// installed clients even store them as WebP), so inlining the originals
+/// into a picker with a hundred-odd rows would be exactly the kind of
+/// slow, unresponsive load this app has already had to fix once.
+fn thumbnail_data_url(cover: &[u8]) -> Option<String> {
+    let jpeg = rhmsspm_core::rhm::thumbnail_jpeg(cover, 96)?;
+    Some(format!("data:image/jpeg;base64,{}", BASE64.encode(jpeg)))
+}
+
 use rhmsspm_core::MapFormat;
 
 fn is_convertible_path(path: &Path) -> bool {
@@ -174,9 +184,26 @@ fn compare_maps(path_a: String, path_b: String) -> Result<CompareReport, String>
     let (a, a_notes) = read_one(&path_a)?;
     let (b, b_notes) = read_one(&path_b)?;
 
-    let a_set: std::collections::HashSet<_> = a_notes.iter().collect();
-    let b_set: std::collections::HashSet<_> = b_notes.iter().collect();
-    let matching_notes = a_set.intersection(&b_set).count();
+    // Counted per key, not deduplicated into a set -- a chart can
+    // legitimately have two notes stacked at the exact same time and
+    // position (confirmed against real maps), and a plain HashSet
+    // intersection collapses those into one, misreporting a perfectly
+    // preserved duplicate as "1 only in A, 1 only in B".
+    fn counts(notes: &[NoteKey]) -> std::collections::HashMap<NoteKey, usize> {
+        let mut map = std::collections::HashMap::new();
+        for &key in notes {
+            *map.entry(key).or_insert(0) += 1;
+        }
+        map
+    }
+    let a_counts = counts(&a_notes);
+    let b_counts = counts(&b_notes);
+
+    let mut matching_notes = 0;
+    for (key, &a_count) in &a_counts {
+        let b_count = b_counts.get(key).copied().unwrap_or(0);
+        matching_notes += a_count.min(b_count);
+    }
     let only_in_a = a_notes.len() - matching_notes;
     let only_in_b = b_notes.len() - matching_notes;
 
@@ -187,6 +214,86 @@ fn compare_maps(path_a: String, path_b: String) -> Result<CompareReport, String>
         only_in_a,
         only_in_b,
     })
+}
+
+#[cfg(test)]
+mod compare_maps_tests {
+    use super::*;
+    use rhmsspm_core::rhm::{Rhm, RhmMap, RhmNote};
+
+    fn map_with_notes(notes: Vec<RhmNote>) -> RhmMap {
+        RhmMap {
+            online_id: None,
+            online_status: None,
+            legacy_id: None,
+            song_name: String::new(),
+            mappers: Vec::new(),
+            title: "Test".to_string(),
+            tags: Vec::new(),
+            duration: 1000,
+            difficulty: 0,
+            custom_difficulty_name: String::new(),
+            star_rating: 0.0,
+            notes,
+            audio_file_name: String::new(),
+            image_path: None,
+            audio_timing_mode: None,
+            timing_points: Vec::new(),
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// A chart can legitimately have two notes stacked at the exact same
+    /// time and position (confirmed against a real downloaded map) --
+    /// the old `HashSet`-based comparison collapsed those into one and
+    /// misreported a perfectly identical duplicate as "1 only in A, 1
+    /// only in B" even though nothing actually differed.
+    #[test]
+    fn duplicate_notes_at_the_same_spot_are_not_reported_as_a_mismatch() {
+        let notes = vec![
+            RhmNote {
+                time: 100,
+                x: 1.0,
+                y: 1.0,
+            },
+            RhmNote {
+                time: 100,
+                x: 1.0,
+                y: 1.0,
+            },
+            RhmNote {
+                time: 200,
+                x: 0.0,
+                y: 0.0,
+            },
+        ];
+        let bytes = rhmsspm_core::rhm::write(&Rhm {
+            map: map_with_notes(notes),
+            audio: Vec::new(),
+            cover: Vec::new(),
+        })
+        .unwrap();
+
+        let dir = std::env::temp_dir().join(format!(
+            "rhm2sspm-compare-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path_a = dir.join("a.rhm");
+        let path_b = dir.join("b.rhm");
+        std::fs::write(&path_a, &bytes).unwrap();
+        std::fs::write(&path_b, &bytes).unwrap();
+
+        let report =
+            compare_maps(path_a.display().to_string(), path_b.display().to_string()).unwrap();
+
+        assert_eq!(report.matching_notes, 3);
+        assert_eq!(report.only_in_a, 0);
+        assert_eq!(report.only_in_b, 0);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
 /// User edits made in the metadata editor before conversion. `None`
@@ -469,25 +576,238 @@ fn game_map_dirs() -> Vec<(&'static str, PathBuf)> {
     candidates
 }
 
+/// `Folder` games (Rhythia/Godot, Novastra) keep loose map files in a
+/// directory the frontend can scan directly with `resolve_map_paths`.
+/// `Capo` (the Steam release of Rhythia) is a different, non-Godot client
+/// that caches maps as loose JSON + hash-named blob files indexed by its
+/// own SQLite database rather than as `.rhm` files -- it needs its own
+/// import command (`import_capo_maps`) to materialize real `.rhm` files
+/// before they can be queued the same way.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum GameSource {
+    Folder,
+    Capo,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DetectedGame {
     name: String,
     dir: String,
+    source: GameSource,
 }
 
 /// Which of the games this app knows about are actually installed on
-/// this machine, going by whether their map-library folder exists.
+/// this machine, going by whether their map-library folder (or, for Capo,
+/// its cache directory) exists.
 #[tauri::command]
 fn detect_installed_games() -> Vec<DetectedGame> {
-    game_map_dirs()
+    let mut games: Vec<DetectedGame> = game_map_dirs()
         .into_iter()
         .filter(|(_, dir)| dir.is_dir())
         .map(|(name, dir)| DetectedGame {
             name: name.to_string(),
             dir: dir.display().to_string(),
+            source: GameSource::Folder,
         })
-        .collect()
+        .collect();
+
+    if let Some(dir) = rhmsspm_core::capo_data_dir() {
+        games.push(DetectedGame {
+            name: "Rhythia (Steam)".to_string(),
+            dir: dir.display().to_string(),
+            source: GameSource::Capo,
+        });
+    }
+
+    games
+}
+
+/// A map ready to show in the installed-maps picker, regardless of which
+/// source it came from -- `id` means different things per source (a
+/// Capo cache path that still needs materializing vs. a real file path
+/// that's already queueable as-is), but the shape shown to the user is
+/// the same either way.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstalledMapSummary {
+    id: String,
+    title: String,
+    mappers: Vec<String>,
+    duration_ms: i64,
+    note_count: usize,
+    difficulty: i32,
+    custom_difficulty_name: String,
+    star_rating: f32,
+    /// Set eagerly for folder games (the cover's already in memory from
+    /// reading the file) but left `None` for Capo (fetched lazily via
+    /// `get_capo_map_cover` -- listing has to stay cheap there).
+    cover_data_url: Option<String>,
+}
+
+/// Lists every map the local Capo ("Rhythia (Steam)") client has cached,
+/// for a picker -- deliberately cheap (JSON metadata only, no audio/cover
+/// I/O or `.rhm` writing), unlike `import_capo_maps`.
+#[tauri::command]
+fn list_capo_maps() -> Result<Vec<InstalledMapSummary>, String> {
+    let data_dir = rhmsspm_core::capo_data_dir()
+        .ok_or_else(|| "Rhythia (Steam) is not installed on this machine".to_string())?;
+    let entries = rhmsspm_core::capo::list_maps(&data_dir).map_err(|e| e.to_string())?;
+    Ok(entries
+        .into_iter()
+        .map(|e| InstalledMapSummary {
+            id: e.json_path.display().to_string(),
+            title: e.title,
+            mappers: e.mappers,
+            duration_ms: e.duration_ms,
+            note_count: e.note_count,
+            difficulty: e.difficulty,
+            custom_difficulty_name: e.custom_difficulty_name,
+            star_rating: e.star_rating,
+            cover_data_url: None,
+        })
+        .collect())
+}
+
+/// The cover thumbnail for one Capo map (`id` from `list_capo_maps`),
+/// fetched lazily and separately from the listing itself -- real cover
+/// files run several MB each, so generating all of them up front would
+/// undo the whole point of keeping `list_capo_maps` cheap.
+///
+/// Decoding/resizing a several-MB image is real CPU work, and a plain
+/// synchronous command runs inline on one of Tauri's async runtime
+/// worker threads rather than a thread dedicated to blocking work --
+/// tying one up repeatedly (once per row, however many rows there are)
+/// was stalling other IPC traffic on that same worker and made the UI
+/// stutter through the whole picker load. `spawn_blocking` moves the
+/// actual work onto tokio's blocking-task pool instead.
+#[tauri::command]
+async fn get_capo_map_cover(id: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data_dir = rhmsspm_core::capo_data_dir()
+            .ok_or_else(|| "Rhythia (Steam) is not installed on this machine".to_string())?;
+        let maps_dir = data_dir.join("cache").join("maps");
+        let json_path = Path::new(&id);
+        if !json_path.starts_with(&maps_dir) {
+            return Err(format!("not a Capo map id: {id}"));
+        }
+        let cover =
+            rhmsspm_core::capo::read_cover(&data_dir, json_path).map_err(|e| e.to_string())?;
+        Ok(thumbnail_data_url(&cover))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Lists every map file already sitting in a detected game folder (e.g.
+/// the Godot Rhythia client's `maps/` dir), for the same picker Capo
+/// uses. Unlike Capo's cache, these are already real `.rhm`/`.phxm`/
+/// `.sspm` files -- `id` here is just the file path, so "importing" a
+/// selection is a no-op pass-through, no materializing needed.
+///
+/// Runs on tokio's blocking pool (see `get_capo_map_cover`) since this
+/// reads every file and generates a thumbnail for each, same CPU profile.
+#[tauri::command]
+async fn list_folder_maps(dir: String) -> Result<Vec<InstalledMapSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = Vec::new();
+        for path_str in resolve_map_paths(vec![dir]) {
+            let path = Path::new(&path_str);
+            let bytes =
+                std::fs::read(path).map_err(|e| format!("failed to read {path_str}: {e}"))?;
+            let rhm =
+                rhmsspm_core::read_any(source_format(path), &bytes).map_err(|e| e.to_string())?;
+            let cover_data_url = thumbnail_data_url(&rhm.cover);
+            out.push(InstalledMapSummary {
+                id: path_str,
+                title: rhm.map.title,
+                mappers: rhm.map.mappers,
+                duration_ms: rhm.map.duration,
+                note_count: rhm.map.notes.len(),
+                difficulty: rhm.map.difficulty,
+                custom_difficulty_name: rhm.map.custom_difficulty_name,
+                star_rating: rhm.map.star_rating,
+                cover_data_url,
+            });
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Materializes the given Capo maps (`id`s from `list_capo_maps`) into
+/// real `.rhm` files under the OS temp dir, so they can be queued exactly
+/// like any other file. Only touches what's asked for -- reading each
+/// map's audio and re-zipping it is the expensive part, so importing
+/// everything unconditionally made this freeze the UI on a library of any
+/// real size.
+///
+/// Runs on tokio's blocking pool (see `get_capo_map_cover`) -- reading
+/// audio and re-compressing a `.rhm` per selected map is the same kind of
+/// CPU-bound work that shouldn't run inline on an async worker thread.
+#[tauri::command]
+async fn import_capo_maps(ids: Vec<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data_dir = rhmsspm_core::capo_data_dir()
+            .ok_or_else(|| "Rhythia (Steam) is not installed on this machine".to_string())?;
+        let maps_dir = data_dir.join("cache").join("maps");
+
+        let out_dir = std::env::temp_dir().join("rhm2sspm-capo-import");
+        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+        let mut used_names = std::collections::HashSet::new();
+        let mut paths = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let json_path = Path::new(id);
+            if !json_path.starts_with(&maps_dir) {
+                return Err(format!("not a Capo map id: {id}"));
+            }
+
+            let rhm =
+                rhmsspm_core::capo::read_map(&data_dir, json_path).map_err(|e| e.to_string())?;
+            let title = rhm.map.title.clone();
+            let bytes = rhmsspm_core::write_any(MapFormat::Rhm, rhm).map_err(|e| e.to_string())?;
+
+            let base_name = sanitize_file_name(&title);
+            let mut file_name = format!("{base_name}.rhm");
+            let mut n = 2;
+            while !used_names.insert(file_name.clone()) {
+                file_name = format!("{base_name} ({n}).rhm");
+                n += 1;
+            }
+
+            let out_path = out_dir.join(&file_name);
+            std::fs::write(&out_path, &bytes).map_err(|e| e.to_string())?;
+            paths.push(out_path.display().to_string());
+        }
+        Ok(paths)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Replaces characters that are invalid (or awkward) in a file name on
+/// either Windows or Linux with `_`, so an arbitrary map title can be used
+/// directly as a file name.
+fn sanitize_file_name(title: &str) -> String {
+    let cleaned: String = title
+        .chars()
+        .map(|c| {
+            if c.is_control() || "\\/:*?\"<>|".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "untitled".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Files this process was launched with (double-clicked, or "open
@@ -651,6 +971,10 @@ pub fn run() {
             get_launch_files,
             get_build_info,
             detect_installed_games,
+            list_capo_maps,
+            list_folder_maps,
+            get_capo_map_cover,
+            import_capo_maps,
             compare_maps
         ])
         .run(tauri::generate_context!())

@@ -39,6 +39,24 @@ pub(crate) fn to_png(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(png)
 }
 
+/// Downscales `bytes` (any image format this build can decode) to fit
+/// within `max_dim` on its longest side and re-encodes as JPEG -- for a
+/// small picker thumbnail rather than shipping a multi-MB original cover
+/// (real ones run several MB, some clients even store them as WebP).
+/// `None` if `bytes` isn't a decodable image, same as [`to_png`].
+pub fn thumbnail_jpeg(bytes: &[u8], max_dim: u32) -> Option<Vec<u8>> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let img = image::load_from_memory(bytes).ok()?;
+    let thumb = img.thumbnail(max_dim, max_dim).into_rgb8();
+    let mut jpeg = Vec::new();
+    thumb
+        .write_to(&mut Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+        .ok()?;
+    Some(jpeg)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RhmNote {
     #[serde(rename = "Time")]
@@ -229,6 +247,24 @@ mod tests {
         assert!(is_png(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR"));
         assert!(!is_png(b"\xff\xd8\xff\xe0\x00\x10JFIF")); // JPEG
         assert!(!is_png(b""));
+    }
+
+    const MINIMAL_PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2,
+        0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 255, 255, 63,
+        0, 5, 254, 2, 254, 13, 239, 70, 184, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+
+    #[test]
+    fn thumbnail_jpeg_decodes_and_reencodes_a_real_image() {
+        let jpeg = thumbnail_jpeg(MINIMAL_PNG, 96).unwrap();
+        assert!(jpeg.starts_with(b"\xff\xd8\xff"));
+    }
+
+    #[test]
+    fn thumbnail_jpeg_is_none_for_empty_or_undecodable_input() {
+        assert!(thumbnail_jpeg(b"", 96).is_none());
+        assert!(thumbnail_jpeg(b"not an image", 96).is_none());
     }
 
     fn sample_map(notes: Vec<RhmNote>, duration: i64) -> RhmMap {

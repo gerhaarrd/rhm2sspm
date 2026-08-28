@@ -1,3 +1,4 @@
+pub mod capo;
 pub mod convert;
 pub mod error;
 pub mod format;
@@ -9,6 +10,7 @@ pub mod reverse;
 pub mod rhm;
 pub mod sspm;
 
+pub use capo::{capo_data_dir, CapoMapEntry};
 pub use convert::{
     convert_npk_bytes, convert_phxm_bytes, convert_rhm, convert_rhm_bytes, ConversionReport,
 };

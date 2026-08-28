@@ -11,7 +11,7 @@ Desktop app highlights:
 - Shift a chart's notes by N ms to fix audio desync
 - Warns if a file was already converted before
 - Double-click a `.rhm`/`.phxm`/`.npk`/`.sspm` file (or "Open with…") to launch straight into the queue, or drop in a `.zip` pack to queue everything inside it
-- Browse maps already installed by a detected Rhythia/Nova install and queue them directly
+- Browse maps already installed by a detected Rhythia (including the Steam client, which stores its library differently) or Nova install, with cover art and search, and pick exactly which ones to queue
 - Compare two files of "the same" map (e.g. two exports) to see exactly how their notes differ
 - Export bundles a `README.txt` describing the pack alongside the maps
 - Every write is re-read and verified before being reported as done

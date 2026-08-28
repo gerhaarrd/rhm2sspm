@@ -321,3 +321,33 @@ export function IconPin({ className, filled }: IconProps & { filled?: boolean })
     </svg>
   );
 }
+
+export function IconChevronRight({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path className={base} d="m9 5 7 7-7 7" />
+    </svg>
+  );
+}
+
+export function IconSearch({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <g className={base}>
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m20 20-4.5-4.5" />
+      </g>
+    </svg>
+  );
+}
+
+export function IconStar({ className, filled }: IconProps & { filled?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path
+        className={filled ? "fill-current stroke-current" : base}
+        d="m12 3.5 2.6 5.4 5.9.8-4.3 4.2 1 5.9L12 17l-5.2 2.8 1-5.9-4.3-4.2 5.9-.8L12 3.5Z"
+      />
+    </svg>
+  );
+}

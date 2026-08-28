@@ -43,6 +43,7 @@ import { HistoryPanel } from "./components/HistoryPanel";
 import { BatchEditPanel } from "./components/BatchEditPanel";
 import { ChangelogPopup } from "./components/ChangelogPopup";
 import { ComparePanel } from "./components/ComparePanel";
+import { InstalledMapsPanel } from "./components/InstalledMapsPanel";
 import { InstalledGamesPanel } from "./components/InstalledGamesPanel";
 import { Onboarding } from "./components/Onboarding";
 import { CHANGELOG } from "./lib/changelog";
@@ -71,7 +72,7 @@ import {
   IconSun,
   IconUpload,
 } from "./components/Icons";
-import type { HistoryEntry, MapFormat, MetadataOverrides, QueueEntry } from "./types";
+import type { DetectedGame, HistoryEntry, MapFormat, MetadataOverrides, QueueEntry } from "./types";
 
 const THEME_CYCLE: ThemeMode[] = ["dark", "light", "system"];
 const THEME_ICON: Record<ThemeMode, typeof IconSun> = {
@@ -119,6 +120,7 @@ export default function App() {
   );
   const [showCompare, setShowCompare] = useState(false);
   const [showInstalledGames, setShowInstalledGames] = useState(false);
+  const [pickerGame, setPickerGame] = useState<DetectedGame | null>(null);
   const [buildInfo, setBuildInfo] = useState<{ version: string; commit: string } | null>(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
@@ -664,7 +666,7 @@ export default function App() {
         className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(ellipse_at_top,_rgba(59,130,246,0.16),_transparent_70%)]"
       />
 
-      <header className="relative z-10 flex items-center justify-between border-b border-[rgb(var(--ink)/0.06)] bg-[rgb(var(--ink)/0.015)] px-6 py-4">
+      <header className="relative z-20 flex items-center justify-between border-b border-[rgb(var(--ink)/0.06)] bg-[rgb(var(--ink)/0.015)] px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-500">
             <IconGrid className="h-5 w-5 text-white" />
@@ -975,8 +977,19 @@ export default function App() {
 
       {showInstalledGames && (
         <InstalledGamesPanel
-          onImport={(paths) => void addPaths(paths)}
+          onPickGame={(game) => {
+            setPickerGame(game);
+            setShowInstalledGames(false);
+          }}
           onClose={() => setShowInstalledGames(false)}
+        />
+      )}
+
+      {pickerGame && (
+        <InstalledMapsPanel
+          game={pickerGame}
+          onImport={(paths) => void addPaths(paths)}
+          onClose={() => setPickerGame(null)}
         />
       )}
 

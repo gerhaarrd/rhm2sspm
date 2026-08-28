@@ -54,6 +54,26 @@ export interface BuildInfo {
 export interface DetectedGame {
   name: string;
   dir: string;
+  /** "folder": list_folder_maps(dir) -- ids are already real file paths.
+   * "capo": list_capo_maps() -- ids need importCapoMaps() to materialize
+   * a real `.rhm` before they're queueable. */
+  source: "folder" | "capo";
+}
+
+export interface InstalledMapSummary {
+  /** Opaque: a real file path for "folder" games, or a Capo cache path
+   * that still needs importCapoMaps() for "capo" ones. */
+  id: string;
+  title: string;
+  mappers: string[];
+  durationMs: number;
+  noteCount: number;
+  difficulty: number;
+  customDifficultyName: string;
+  starRating: number;
+  /** Set already for "folder" games; null for "capo" -- fetch lazily with
+   * getCapoMapCover(id) since generating it costs real I/O there. */
+  coverDataUrl: string | null;
 }
 
 export interface MapSummary {

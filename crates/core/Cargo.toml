@@ -12,6 +12,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 sha1 = "0.10"
 byteorder = "1"
 thiserror = "2"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 
 [dev-dependencies]
