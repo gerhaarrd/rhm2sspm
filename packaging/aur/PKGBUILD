@@ -1,0 +1,35 @@
+# Maintainer: gerhaarrd
+pkgname=rhm2sspm-bin
+pkgver=0.1.2
+pkgrel=1
+pkgdesc="Converts Rhythia (.rhm/.phxm), Nova (.npk) and Sound Space+ (.sspm) map files, preserving timing and off-grid notes exactly"
+arch=('x86_64')
+url="https://github.com/gerhaarrd/rhm2sspm"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3')
+optdepends=(
+  'gst-plugins-base: audio preview'
+  'gst-plugins-good: audio preview'
+  'gst-plugins-bad: audio preview'
+  'gst-plugins-ugly: audio preview'
+  'gst-libav: audio preview'
+  'gst-plugin-pipewire: audio preview'
+)
+provides=('rhm2sspm')
+conflicts=('rhm2sspm')
+options=('!strip')
+source=(
+  "${pkgname%-bin}_${pkgver}_amd64.deb::https://github.com/gerhaarrd/rhm2sspm/releases/download/v${pkgver}/rhm2sspm_${pkgver}_amd64.deb"
+  "LICENSE-${pkgver}::https://raw.githubusercontent.com/gerhaarrd/rhm2sspm/v${pkgver}/LICENSE"
+)
+noextract=("${pkgname%-bin}_${pkgver}_amd64.deb")
+sha256sums=(
+  '5a07b8bd37c0ece94e23ae0712dfac5c59269f175c3547dbd0b6154e9ef4576a'
+  'cc632882eab063a0222f7d4b15a42564fb86041ad65b056d3a83f8e93e57d386'
+)
+
+package() {
+  ar x "${srcdir}/${pkgname%-bin}_${pkgver}_amd64.deb" data.tar.gz --output="${srcdir}"
+  tar -xf "${srcdir}/data.tar.gz" -C "${pkgdir}"
+  install -Dm644 "${srcdir}/LICENSE-${pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
