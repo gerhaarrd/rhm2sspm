@@ -74,7 +74,9 @@ pub fn parse_cached_map(bytes: &[u8]) -> Result<RhmMap> {
     let mut map: RhmMap = serde_json::from_value(value)?;
 
     map.notes = bytes[json_end..json_end + notes_len]
-        .chunks_exact(RHC_NOTE_LEN)
+        .as_chunks::<RHC_NOTE_LEN>()
+        .0
+        .iter()
         .map(|c| RhmNote {
             time: i64::from(i32::from_le_bytes(c[0..4].try_into().unwrap())),
             x: f32::from_le_bytes(c[4..8].try_into().unwrap()),
