@@ -11,8 +11,9 @@ Desktop app highlights:
 - Shift a chart's notes by N ms to fix audio desync
 - Warns if a file was already converted before
 - Double-click a `.rhm`/`.phxm`/`.npk`/`.sspm` file (or "Open with…") to launch straight into the queue, or drop in a `.zip` pack to queue everything inside it
-- Browse maps already installed by a detected Rhythia (including the Steam client, which stores its library differently) or Nova install, with cover art and search, and pick exactly which ones to queue
+- Browse maps already installed by a detected Rhythia (including the Steam client, which stores its library differently), Nova or Chromia install, with cover art and search, and pick exactly which ones to queue
 - Send the whole queue to Rhythia on Steam in one go: every map is converted to `.rhm` (the Steam client's own format) into a fresh folder that opens ready to select-all and drag onto the game window
+- Install the whole queue into Chromia in one click: every map is converted to `.sspm` and dropped straight into its maps folder (never overwriting what's there), and Chromia's library shows up under "already-installed maps" too
 - Compare two files of "the same" map (e.g. two exports) to see exactly how their notes differ
 - Export bundles a `README.txt` describing the pack alongside the maps
 - Every write is re-read and verified before being reported as done

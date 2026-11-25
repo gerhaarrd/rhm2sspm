@@ -9,7 +9,7 @@ import type {
   MapFormat,
   MapPreview,
   MetadataOverrides,
-  SteamImportBatch,
+  MapBatch,
 } from "../types";
 
 export function previewMap(path: string, targetFormat: MapFormat): Promise<MapPreview> {
@@ -135,6 +135,14 @@ export function getCapoMapCover(id: string): Promise<string | null> {
  * folder, ready to drag into the Steam build of Rhythia all at once. */
 export function prepareSteamImport(
   items: { path: string; overrides: MetadataOverrides | null }[],
-): Promise<SteamImportBatch> {
+): Promise<MapBatch> {
   return invoke("prepare_steam_import", { items });
+}
+
+/** Installs many queued maps (with their edits) straight into Chromia's
+ * map folder as `.sspm`, never overwriting what's already there. */
+export function installToChromia(
+  items: { path: string; overrides: MetadataOverrides | null }[],
+): Promise<MapBatch> {
+  return invoke("install_to_chromia", { items });
 }

@@ -552,6 +552,20 @@ fn get_build_info(app: tauri::AppHandle) -> BuildInfo {
     }
 }
 
+/// Chromia (a Godot fork of Sound Space+) loads every `.sspm` sitting in
+/// `user://maps`, i.e. `%APPDATA%\Chromia\maps` on Windows -- confirmed on
+/// a real install, where its map cache lists exactly those files (including
+/// `.sspm`s this app wrote). The Linux path follows Godot's usual
+/// `~/.local/share/<project>` convention and hasn't been checked.
+const CHROMIA_MAPS_SUBDIR: &str = "Chromia/maps";
+
+fn chromia_maps_dir() -> Option<PathBuf> {
+    game_map_dirs()
+        .into_iter()
+        .find(|(name, dir)| *name == "Chromia" && dir.is_dir())
+        .map(|(_, dir)| dir)
+}
+
 /// Roots under which each supported game keeps its own map library, one
 /// per platform this app targets. Confirmed against the real games on
 /// Linux; the Windows paths follow Godot's standard per-project
@@ -572,6 +586,7 @@ fn game_map_dirs() -> Vec<(&'static str, PathBuf)> {
     for root in &roots {
         candidates.push(("Rhythia", root.join("Rhythia/maps")));
         candidates.push(("Novastra", root.join("Novastra/charts")));
+        candidates.push(("Chromia", root.join(CHROMIA_MAPS_SUBDIR)));
     }
     candidates
 }
@@ -790,26 +805,26 @@ async fn import_capo_maps(ids: Vec<String>) -> Result<Vec<String>, String> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SteamImportItem {
+struct BatchItem {
     path: String,
     overrides: Option<MetadataOverrides>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SteamImportFailure {
+struct BatchFailure {
     path: String,
     error: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SteamImportBatch {
+struct MapBatch {
     /// Fresh folder holding nothing but this batch's `.rhm` files, so
     /// "select all + drag into the game" picks up exactly this batch.
     dir: String,
     files: Vec<String>,
-    failures: Vec<SteamImportFailure>,
+    failures: Vec<BatchFailure>,
 }
 
 /// Converts many queued maps (any source format, with their UI edits
@@ -825,7 +840,7 @@ struct SteamImportBatch {
 /// One failing map doesn't abort the rest -- it's reported in
 /// `failures` while everything else still gets written and verified.
 #[tauri::command]
-async fn prepare_steam_import(items: Vec<SteamImportItem>) -> Result<SteamImportBatch, String> {
+async fn prepare_steam_import(items: Vec<BatchItem>) -> Result<MapBatch, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -836,32 +851,55 @@ async fn prepare_steam_import(items: Vec<SteamImportItem>) -> Result<SteamImport
             .join(stamp.to_string());
         std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
 
-        let mut used_names = std::collections::HashSet::new();
-        let mut files = Vec::with_capacity(items.len());
-        let mut failures = Vec::new();
-        for item in items {
-            match write_steam_import_file(&item, &out_dir, &mut used_names) {
-                Ok(path) => files.push(path.display().to_string()),
-                Err(error) => failures.push(SteamImportFailure {
-                    path: item.path,
-                    error,
-                }),
-            }
-        }
-
-        Ok(SteamImportBatch {
-            dir: out_dir.display().to_string(),
-            files,
-            failures,
-        })
+        Ok(write_batch(items, &out_dir, MapFormat::Rhm))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-fn write_steam_import_file(
-    item: &SteamImportItem,
+/// Installs many queued maps straight into Chromia's map library in one
+/// go, as `.sspm` (the only format it loads). Unlike the Steam client,
+/// that's just a folder the game scans, so dropping new files in is all
+/// an install takes -- it picks them up on its next map list refresh /
+/// restart. Existing files are never overwritten: a clash gets a
+/// ` (2)` suffix instead.
+#[tauri::command]
+async fn install_to_chromia(items: Vec<BatchItem>) -> Result<MapBatch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let maps_dir = chromia_maps_dir()
+            .ok_or_else(|| "Chromia is not installed on this machine".to_string())?;
+        Ok(write_batch(items, &maps_dir, MapFormat::Sspm))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Converts every item into `out_dir` as `format`, continuing past
+/// failures (each reported in `failures`) instead of aborting the batch.
+fn write_batch(items: Vec<BatchItem>, out_dir: &Path, format: MapFormat) -> MapBatch {
+    let mut used_names = std::collections::HashSet::new();
+    let mut files = Vec::with_capacity(items.len());
+    let mut failures = Vec::new();
+    for item in items {
+        match write_batch_file(&item, out_dir, format, &mut used_names) {
+            Ok(path) => files.push(path.display().to_string()),
+            Err(error) => failures.push(BatchFailure {
+                path: item.path,
+                error,
+            }),
+        }
+    }
+    MapBatch {
+        dir: out_dir.display().to_string(),
+        files,
+        failures,
+    }
+}
+
+fn write_batch_file(
+    item: &BatchItem,
     out_dir: &Path,
+    format: MapFormat,
     used_names: &mut std::collections::HashSet<String>,
 ) -> Result<PathBuf, String> {
     let input = Path::new(&item.path);
@@ -871,12 +909,15 @@ fn write_steam_import_file(
     apply_overrides(&mut rhm.map, item.overrides.clone());
 
     let base_name = sanitize_file_name(&rhm.map.title);
-    let output = rhmsspm_core::write_any(MapFormat::Rhm, rhm).map_err(|e| e.to_string())?;
+    let output = rhmsspm_core::write_any(format, rhm).map_err(|e| e.to_string())?;
 
-    let mut file_name = format!("{base_name}.rhm");
+    // Never clobber a file already there (out_dir can be a game's live
+    // library) or one written earlier in this same batch.
+    let ext = format.ext();
+    let mut file_name = format!("{base_name}.{ext}");
     let mut n = 2;
-    while !used_names.insert(file_name.to_lowercase()) {
-        file_name = format!("{base_name} ({n}).rhm");
+    while out_dir.join(&file_name).exists() || !used_names.insert(file_name.to_lowercase()) {
+        file_name = format!("{base_name} ({n}).{ext}");
         n += 1;
     }
     let out_path = out_dir.join(&file_name);
@@ -884,9 +925,9 @@ fn write_steam_import_file(
 
     // Same guarantee as convert_map_file: what's on disk must re-parse.
     let written = std::fs::read(&out_path).map_err(|e| e.to_string())?;
-    if let Err(e) = rhmsspm_core::read_any(MapFormat::Rhm, &written) {
+    if let Err(e) = rhmsspm_core::read_any(format, &written) {
         let _ = std::fs::remove_file(&out_path);
-        return Err(format!("converted .rhm failed to verify: {e}"));
+        return Err(format!("converted .{ext} failed to verify: {e}"));
     }
     Ok(out_path)
 }
@@ -1079,6 +1120,7 @@ pub fn run() {
             get_capo_map_cover,
             import_capo_maps,
             prepare_steam_import,
+            install_to_chromia,
             compare_maps
         ])
         .run(tauri::generate_context!())
@@ -1104,22 +1146,22 @@ mod steam_import_tests {
         std::fs::create_dir_all(&out_dir).unwrap();
 
         let items = [
-            SteamImportItem {
+            BatchItem {
                 path: testdata("Caramella Girls - Caramelldansen.rhm"),
                 overrides: Some(MetadataOverrides {
                     title: Some("Renamed: in the UI?".to_string()),
                     ..Default::default()
                 }),
             },
-            SteamImportItem {
+            BatchItem {
                 path: testdata("dampkr_goreshit_-_slavik_goblins.sspm"),
                 overrides: None,
             },
-            SteamImportItem {
+            BatchItem {
                 path: testdata("sdag_-_novastra_map__-_test.npk"),
                 overrides: None,
             },
-            SteamImportItem {
+            BatchItem {
                 path: testdata("does-not-exist.rhm"),
                 overrides: None,
             },
@@ -1128,7 +1170,7 @@ mod steam_import_tests {
         let mut used = std::collections::HashSet::new();
         let results: Vec<_> = items
             .iter()
-            .map(|item| write_steam_import_file(item, &out_dir, &mut used))
+            .map(|item| write_batch_file(item, &out_dir, MapFormat::Rhm, &mut used))
             .collect();
 
         assert!(results[3].is_err());
@@ -1150,8 +1192,23 @@ mod steam_import_tests {
         );
 
         // Two maps with the same title don't overwrite each other.
-        let again = write_steam_import_file(&items[0], &out_dir, &mut used).unwrap();
+        let again = write_batch_file(&items[0], &out_dir, MapFormat::Rhm, &mut used).unwrap();
         assert_ne!(again, written[0]);
+
+        // A file already sitting in the target folder (e.g. a game's live
+        // library) is never overwritten, even across separate batches.
+        let mut fresh_batch = std::collections::HashSet::new();
+        let sspm =
+            write_batch_file(&items[1], &out_dir, MapFormat::Sspm, &mut fresh_batch).unwrap();
+        let sspm_again = write_batch_file(
+            &items[1],
+            &out_dir,
+            MapFormat::Sspm,
+            &mut std::collections::HashSet::new(),
+        )
+        .unwrap();
+        assert_ne!(sspm, sspm_again);
+        rhmsspm_core::read_any(MapFormat::Sspm, &std::fs::read(&sspm_again).unwrap()).unwrap();
 
         let _ = std::fs::remove_dir_all(&out_dir);
     }

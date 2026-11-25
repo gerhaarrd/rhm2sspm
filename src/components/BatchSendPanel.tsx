@@ -1,21 +1,30 @@
-import type { SteamImportBatch } from "../types";
+import type { MapBatch } from "../types";
 import { useTranslation } from "../lib/useTranslation";
 import { IconAlert, IconFolder, IconX } from "./Icons";
 
-/** Shown after "Send to Rhythia (Steam)": the batch is already written
- * and its folder already opened, so this just walks the user through the
- * one drag that hands every map to the game at once. */
-export function SteamImportPanel({
+export type BatchTarget = "steam" | "chromia";
+
+/** Shown after sending the whole queue to a game at once. For Steam
+ * Rhythia the batch folder is already open and the user still has to drag
+ * it into the game; for Chromia the maps are already installed in its
+ * library, so this is just a confirmation. */
+export function BatchSendPanel({
+  target,
   batch,
   onOpenFolder,
   onClose,
 }: {
-  batch: SteamImportBatch;
+  target: BatchTarget;
+  batch: MapBatch;
   onOpenFolder: () => void;
   onClose: () => void;
 }) {
   const { t, tn } = useTranslation();
-  const steps = ["steamImport.step1", "steamImport.step2", "steamImport.step3"];
+  const prefix = target === "steam" ? "steamImport" : "chromiaInstall";
+  const steps =
+    target === "steam"
+      ? ["steamImport.step1", "steamImport.step2", "steamImport.step3"]
+      : ["chromiaInstall.step1"];
 
   return (
     <div
@@ -28,7 +37,7 @@ export function SteamImportPanel({
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-[rgb(var(--ink)/0.9)]">
-            {tn("steamImport.title", batch.files.length)}
+            {tn(`${prefix}.title`, batch.files.length)}
           </h2>
           <button
             type="button"
@@ -43,9 +52,11 @@ export function SteamImportPanel({
           <ol className="mb-3 space-y-2">
             {steps.map((key, i) => (
               <li key={key} className="flex gap-2 text-xs text-[rgb(var(--ink)/0.75)]">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600/20 text-[10px] font-semibold text-blue-400">
-                  {i + 1}
-                </span>
+                {steps.length > 1 && (
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600/20 text-[10px] font-semibold text-blue-400">
+                    {i + 1}
+                  </span>
+                )}
                 <span className="pt-0.5">{t(key)}</span>
               </li>
             ))}
@@ -76,7 +87,7 @@ export function SteamImportPanel({
               className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-[rgb(var(--ink)/0.7)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)]"
             >
               <IconFolder className="h-3.5 w-3.5" />
-              {t("steamImport.openFolder")}
+              {t(`${prefix}.openFolder`)}
             </button>
           )}
           <button
