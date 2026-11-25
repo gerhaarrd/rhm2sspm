@@ -146,3 +146,14 @@ export function installToChromia(
 ): Promise<MapBatch> {
   return invoke("install_to_chromia", { items });
 }
+
+/** Exports maps straight out of a detected game's library (ids from
+ * listCapoMaps / listFolderMaps) into `destDir` as `format`, in one go. */
+export function exportInstalledMaps(
+  source: "capo" | "folder",
+  ids: string[],
+  format: MapFormat,
+  destDir: string,
+): Promise<MapBatch> {
+  return invoke("export_installed_maps", { source, ids, format, destDir });
+}

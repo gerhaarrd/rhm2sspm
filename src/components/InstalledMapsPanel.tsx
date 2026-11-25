@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import type { DetectedGame, InstalledMapSummary } from "../types";
-import { getCapoMapCover, importCapoMaps, listCapoMaps, listFolderMaps } from "../lib/backend";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import type { DetectedGame, InstalledMapSummary, MapFormat } from "../types";
+import {
+  exportInstalledMaps,
+  getCapoMapCover,
+  importCapoMaps,
+  listCapoMaps,
+  listFolderMaps,
+  pickOutputFolder,
+} from "../lib/backend";
+import { MAP_FORMATS } from "../lib/mapFormat";
 import { difficultyColor, difficultyName, formatDuration } from "../lib/format";
 import { useTranslation } from "../lib/useTranslation";
 import { toast } from "../lib/toast";
@@ -11,6 +20,7 @@ import {
   IconGamepad,
   IconGrid,
   IconMusic,
+  IconFolder,
   IconSearch,
   IconSpinner,
   IconX,
@@ -31,6 +41,8 @@ export function InstalledMapsPanel({
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportFormat, setExportFormat] = useState<MapFormat>("sspm");
   const [covers, setCovers] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -140,6 +152,33 @@ export function InstalledMapsPanel({
       toast.error(String(err));
     } finally {
       setImporting(false);
+    }
+  };
+
+  const runExport = async () => {
+    if (selected.size === 0) return;
+    const dest = await pickOutputFolder();
+    if (!dest) return;
+    setExporting(true);
+    try {
+      const batch = await exportInstalledMaps(game.source, [...selected], exportFormat, dest);
+      const total = batch.files.length + batch.failures.length;
+      if (batch.failures.length === 0) {
+        toast.success(tn("toast.exportInstalledDone", batch.files.length));
+      } else {
+        toast.error(
+          t("toast.exportInstalledPartial", {
+            ok: batch.files.length,
+            total,
+            failed: batch.failures.map((f) => `${f.path.split(/[\\/]/).pop()} (${f.error})`).join(", "),
+          }),
+        );
+      }
+      if (batch.files.length > 0) void revealItemInDir(batch.files[0]);
+    } catch (err) {
+      toast.error(t("toast.exportInstalledFailed", { error: String(err) }));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -289,12 +328,46 @@ export function InstalledMapsPanel({
               )}
             </div>
 
-            <div className="border-t border-[rgb(var(--ink)/0.08)] p-3">
+            <div className="flex gap-2 border-t border-[rgb(var(--ink)/0.08)] p-3">
+              <div
+                className="flex shrink-0 items-stretch overflow-hidden rounded-lg ring-1 ring-[rgb(var(--ink)/0.15)]"
+                title={t("capoMaps.exportTooltip")}
+              >
+                <select
+                  value={exportFormat}
+                  onChange={(e) => setExportFormat(e.target.value as MapFormat)}
+                  aria-label={t("capoMaps.exportFormat")}
+                  className="bg-[rgb(var(--ink)/0.05)] px-2 text-xs text-[rgb(var(--ink)/0.8)] focus:outline-none"
+                >
+                  {MAP_FORMATS.map((f) => (
+                    <option key={f} value={f}>
+                      .{f}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void runExport()}
+                  disabled={selected.size === 0 || exporting || importing}
+                  className="flex items-center gap-1.5 border-l border-[rgb(var(--ink)/0.15)] px-3 py-2 text-xs font-medium text-[rgb(var(--ink)/0.75)] transition hover:bg-[rgb(var(--ink)/0.06)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {exporting ? (
+                    <>
+                      <IconSpinner className="h-3.5 w-3.5" /> {t("capoMaps.exporting")}
+                    </>
+                  ) : (
+                    <>
+                      <IconFolder className="h-3.5 w-3.5" />
+                      {tn("capoMaps.exportButton", selected.size)}
+                    </>
+                  )}
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => void runImport()}
-                disabled={selected.size === 0 || importing}
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-900/30 transition disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={selected.size === 0 || importing || exporting}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-900/30 transition disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {importing ? (
                   <>

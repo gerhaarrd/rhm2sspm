@@ -874,6 +874,68 @@ async fn install_to_chromia(items: Vec<BatchItem>) -> Result<MapBatch, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Exports maps straight out of a detected game's library (ids from
+/// `list_capo_maps` for `source: "capo"`, or file paths from
+/// `list_folder_maps` for `"folder"`) into `dest_dir` as `format`, in
+/// one go -- no need to queue them first. Same per-map failure handling
+/// and no-overwrite naming as the send-to-game batches.
+#[tauri::command]
+async fn export_installed_maps(
+    source: String,
+    ids: Vec<String>,
+    format: MapFormat,
+    dest_dir: String,
+) -> Result<MapBatch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let out_dir = PathBuf::from(&dest_dir);
+        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+        let capo_dir =
+            if source == "capo" {
+                Some(rhmsspm_core::capo_data_dir().ok_or_else(|| {
+                    "Rhythia (Steam) is not installed on this machine".to_string()
+                })?)
+            } else {
+                None
+            };
+
+        let mut used_names = std::collections::HashSet::new();
+        let mut files = Vec::with_capacity(ids.len());
+        let mut failures = Vec::new();
+        for id in ids {
+            let result = read_installed_map(capo_dir.as_deref(), &id)
+                .and_then(|rhm| write_rhm_to_dir(rhm, &out_dir, format, &mut used_names));
+            match result {
+                Ok(path) => files.push(path.display().to_string()),
+                Err(error) => failures.push(BatchFailure { path: id, error }),
+            }
+        }
+        Ok(MapBatch {
+            dir: out_dir.display().to_string(),
+            files,
+            failures,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn read_installed_map(capo_dir: Option<&Path>, id: &str) -> Result<rhmsspm_core::rhm::Rhm, String> {
+    let path = Path::new(id);
+    match capo_dir {
+        Some(data_dir) => {
+            if !path.starts_with(data_dir.join("cache").join("maps")) {
+                return Err(format!("not a Capo map id: {id}"));
+            }
+            rhmsspm_core::capo::read_map(data_dir, path).map_err(|e| e.to_string())
+        }
+        None => {
+            let bytes = std::fs::read(path).map_err(|e| format!("failed to read {id}: {e}"))?;
+            rhmsspm_core::read_any(source_format(path), &bytes).map_err(|e| e.to_string())
+        }
+    }
+}
+
 /// Converts every item into `out_dir` as `format`, continuing past
 /// failures (each reported in `failures`) instead of aborting the batch.
 fn write_batch(items: Vec<BatchItem>, out_dir: &Path, format: MapFormat) -> MapBatch {
@@ -907,7 +969,17 @@ fn write_batch_file(
     let mut rhm =
         rhmsspm_core::read_any(source_format(input), &bytes).map_err(|e| e.to_string())?;
     apply_overrides(&mut rhm.map, item.overrides.clone());
+    write_rhm_to_dir(rhm, out_dir, format, used_names)
+}
 
+/// Writes one already-decoded map into `out_dir` as `format`, named after
+/// its title, never clobbering an existing file, and verified on disk.
+fn write_rhm_to_dir(
+    rhm: rhmsspm_core::rhm::Rhm,
+    out_dir: &Path,
+    format: MapFormat,
+    used_names: &mut std::collections::HashSet<String>,
+) -> Result<PathBuf, String> {
     let base_name = sanitize_file_name(&rhm.map.title);
     let output = rhmsspm_core::write_any(format, rhm).map_err(|e| e.to_string())?;
 
@@ -1121,6 +1193,7 @@ pub fn run() {
             import_capo_maps,
             prepare_steam_import,
             install_to_chromia,
+            export_installed_maps,
             compare_maps
         ])
         .run(tauri::generate_context!())
@@ -1209,6 +1282,32 @@ mod steam_import_tests {
         .unwrap();
         assert_ne!(sspm, sspm_again);
         rhmsspm_core::read_any(MapFormat::Sspm, &std::fs::read(&sspm_again).unwrap()).unwrap();
+
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
+
+    #[test]
+    fn exports_installed_folder_maps_to_any_format() {
+        let out_dir = std::env::temp_dir().join(format!(
+            "rhm2sspm-export-installed-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let mut used = std::collections::HashSet::new();
+
+        for (name, format) in [
+            ("vmapimp_luminous_entities_lost_heart.sspm", MapFormat::Phxm),
+            ("Juice WRLD - Bad Boy ft. Young Thug.rhm", MapFormat::Npk),
+        ] {
+            let rhm = read_installed_map(None, &testdata(name)).unwrap();
+            let notes = rhm.map.notes.len();
+            let path = write_rhm_to_dir(rhm, &out_dir, format, &mut used).unwrap();
+            let back = rhmsspm_core::read_any(format, &std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(back.map.notes.len(), notes);
+        }
+
+        // A Capo id outside the client's cache folder is refused.
+        assert!(read_installed_map(Some(&out_dir), "/etc/passwd").is_err());
 
         let _ = std::fs::remove_dir_all(&out_dir);
     }
