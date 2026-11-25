@@ -788,6 +788,109 @@ async fn import_capo_maps(ids: Vec<String>) -> Result<Vec<String>, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SteamImportItem {
+    path: String,
+    overrides: Option<MetadataOverrides>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SteamImportFailure {
+    path: String,
+    error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SteamImportBatch {
+    /// Fresh folder holding nothing but this batch's `.rhm` files, so
+    /// "select all + drag into the game" picks up exactly this batch.
+    dir: String,
+    files: Vec<String>,
+    failures: Vec<SteamImportFailure>,
+}
+
+/// Converts many queued maps (any source format, with their UI edits
+/// applied) to `.rhm` in one go, ready to hand to the Steam ("Capo")
+/// build of Rhythia. `.rhm` is that client's own native format -- it's
+/// what its "Export map" writes (confirmed byte-for-byte against a real
+/// export: same `map`/`audio`/`cover` zip entries and PascalCase JSON),
+/// and it imports maps dropped onto its window. Its library itself is a
+/// hash-named cache indexed by its own SQLite database, which this app
+/// deliberately doesn't write to: the game may be running, and a
+/// hand-written row it didn't create could corrupt the library.
+///
+/// One failing map doesn't abort the rest -- it's reported in
+/// `failures` while everything else still gets written and verified.
+#[tauri::command]
+async fn prepare_steam_import(items: Vec<SteamImportItem>) -> Result<SteamImportBatch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let out_dir = std::env::temp_dir()
+            .join("rhm2sspm-steam-import")
+            .join(stamp.to_string());
+        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+        let mut used_names = std::collections::HashSet::new();
+        let mut files = Vec::with_capacity(items.len());
+        let mut failures = Vec::new();
+        for item in items {
+            match write_steam_import_file(&item, &out_dir, &mut used_names) {
+                Ok(path) => files.push(path.display().to_string()),
+                Err(error) => failures.push(SteamImportFailure {
+                    path: item.path,
+                    error,
+                }),
+            }
+        }
+
+        Ok(SteamImportBatch {
+            dir: out_dir.display().to_string(),
+            files,
+            failures,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn write_steam_import_file(
+    item: &SteamImportItem,
+    out_dir: &Path,
+    used_names: &mut std::collections::HashSet<String>,
+) -> Result<PathBuf, String> {
+    let input = Path::new(&item.path);
+    let bytes = std::fs::read(input).map_err(|e| format!("failed to read {}: {e}", item.path))?;
+    let mut rhm =
+        rhmsspm_core::read_any(source_format(input), &bytes).map_err(|e| e.to_string())?;
+    apply_overrides(&mut rhm.map, item.overrides.clone());
+
+    let base_name = sanitize_file_name(&rhm.map.title);
+    let output = rhmsspm_core::write_any(MapFormat::Rhm, rhm).map_err(|e| e.to_string())?;
+
+    let mut file_name = format!("{base_name}.rhm");
+    let mut n = 2;
+    while !used_names.insert(file_name.to_lowercase()) {
+        file_name = format!("{base_name} ({n}).rhm");
+        n += 1;
+    }
+    let out_path = out_dir.join(&file_name);
+    std::fs::write(&out_path, &output).map_err(|e| e.to_string())?;
+
+    // Same guarantee as convert_map_file: what's on disk must re-parse.
+    let written = std::fs::read(&out_path).map_err(|e| e.to_string())?;
+    if let Err(e) = rhmsspm_core::read_any(MapFormat::Rhm, &written) {
+        let _ = std::fs::remove_file(&out_path);
+        return Err(format!("converted .rhm failed to verify: {e}"));
+    }
+    Ok(out_path)
+}
+
 /// Replaces characters that are invalid (or awkward) in a file name on
 /// either Windows or Linux with `_`, so an arbitrary map title can be used
 /// directly as a file name.
@@ -975,8 +1078,81 @@ pub fn run() {
             list_folder_maps,
             get_capo_map_cover,
             import_capo_maps,
+            prepare_steam_import,
             compare_maps
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod steam_import_tests {
+    use super::*;
+
+    fn testdata(name: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata")
+            .join(name)
+            .display()
+            .to_string()
+    }
+
+    #[test]
+    fn converts_a_mixed_batch_to_rhm_and_keeps_going_past_a_bad_file() {
+        let out_dir =
+            std::env::temp_dir().join(format!("rhm2sspm-steam-import-test-{}", std::process::id()));
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let items = [
+            SteamImportItem {
+                path: testdata("Caramella Girls - Caramelldansen.rhm"),
+                overrides: Some(MetadataOverrides {
+                    title: Some("Renamed: in the UI?".to_string()),
+                    ..Default::default()
+                }),
+            },
+            SteamImportItem {
+                path: testdata("dampkr_goreshit_-_slavik_goblins.sspm"),
+                overrides: None,
+            },
+            SteamImportItem {
+                path: testdata("sdag_-_novastra_map__-_test.npk"),
+                overrides: None,
+            },
+            SteamImportItem {
+                path: testdata("does-not-exist.rhm"),
+                overrides: None,
+            },
+        ];
+
+        let mut used = std::collections::HashSet::new();
+        let results: Vec<_> = items
+            .iter()
+            .map(|item| write_steam_import_file(item, &out_dir, &mut used))
+            .collect();
+
+        assert!(results[3].is_err());
+        let written: Vec<PathBuf> = results.into_iter().filter_map(Result::ok).collect();
+        assert_eq!(written.len(), 3);
+        for path in &written {
+            assert_eq!(path.extension().and_then(|e| e.to_str()), Some("rhm"));
+            let bytes = std::fs::read(path).unwrap();
+            rhmsspm_core::read_any(MapFormat::Rhm, &bytes).unwrap();
+        }
+
+        // UI edits are applied, and the title is made file-name safe.
+        let first =
+            rhmsspm_core::read_any(MapFormat::Rhm, &std::fs::read(&written[0]).unwrap()).unwrap();
+        assert_eq!(first.map.title, "Renamed: in the UI?");
+        assert_eq!(
+            written[0].file_name().unwrap().to_str().unwrap(),
+            "Renamed_ in the UI_.rhm"
+        );
+
+        // Two maps with the same title don't overwrite each other.
+        let again = write_steam_import_file(&items[0], &out_dir, &mut used).unwrap();
+        assert_ne!(again, written[0]);
+
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
 }

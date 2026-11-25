@@ -9,6 +9,7 @@ import type {
   MapFormat,
   MapPreview,
   MetadataOverrides,
+  SteamImportBatch,
 } from "../types";
 
 export function previewMap(path: string, targetFormat: MapFormat): Promise<MapPreview> {
@@ -128,4 +129,12 @@ export function listFolderMaps(dir: string): Promise<InstalledMapSummary[]> {
  * this out since generating it costs real I/O per map. */
 export function getCapoMapCover(id: string): Promise<string | null> {
   return invoke("get_capo_map_cover", { id });
+}
+
+/** Converts many queued maps (with their edits) to `.rhm` in one fresh
+ * folder, ready to drag into the Steam build of Rhythia all at once. */
+export function prepareSteamImport(
+  items: { path: string; overrides: MetadataOverrides | null }[],
+): Promise<SteamImportBatch> {
+  return invoke("prepare_steam_import", { items });
 }

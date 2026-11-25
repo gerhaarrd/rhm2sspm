@@ -5,6 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   convertMapFile,
+  detectInstalledGames,
   exportZip,
   extractZipMaps,
   getBuildInfo,
@@ -13,6 +14,7 @@ import {
   pickOutputFolder,
   pickZipDestination,
   pickZipToImport,
+  prepareSteamImport,
   previewMap,
   resolveMapPaths,
 } from "./lib/backend";
@@ -52,6 +54,7 @@ import { QueueItem } from "./components/QueueItem";
 import { QueueItemGrid } from "./components/QueueItemGrid";
 import { QueueToolbar, type SortKey, type ViewMode } from "./components/QueueToolbar";
 import { SessionStats } from "./components/SessionStats";
+import { SteamImportPanel } from "./components/SteamImportPanel";
 import { Toaster } from "./components/Toaster";
 import {
   IconArchive,
@@ -72,7 +75,14 @@ import {
   IconSun,
   IconUpload,
 } from "./components/Icons";
-import type { DetectedGame, HistoryEntry, MapFormat, MetadataOverrides, QueueEntry } from "./types";
+import type {
+  DetectedGame,
+  HistoryEntry,
+  MapFormat,
+  MetadataOverrides,
+  QueueEntry,
+  SteamImportBatch,
+} from "./types";
 
 const THEME_CYCLE: ThemeMode[] = ["dark", "light", "system"];
 const THEME_ICON: Record<ThemeMode, typeof IconSun> = {
@@ -124,6 +134,9 @@ export default function App() {
   const [buildInfo, setBuildInfo] = useState<{ version: string; commit: string } | null>(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [hasSteamRhythia, setHasSteamRhythia] = useState(false);
+  const [isPreparingSteamImport, setIsPreparingSteamImport] = useState(false);
+  const [steamImportBatch, setSteamImportBatch] = useState<SteamImportBatch | null>(null);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
 
@@ -332,6 +345,14 @@ export default function App() {
     void getBuildInfo().then(setBuildInfo);
   }, []);
 
+  // Only offer "Send to Rhythia (Steam)" when that client is actually
+  // installed here -- otherwise the button would just be noise.
+  useEffect(() => {
+    void detectInstalledGames().then((games) =>
+      setHasSteamRhythia(games.some((g) => g.source === "capo")),
+    );
+  }, []);
+
   // Show what's new once, if this launch is running a newer version than
   // last time (typically right after an auto-update relaunches) -- never
   // on a fresh install, since there's no "previous version" to compare.
@@ -464,6 +485,36 @@ export default function App() {
       setIsExporting(false);
     }
   }, [t, tn]);
+
+  const openSteamImportFolder = useCallback((batch: SteamImportBatch) => {
+    // Revealing a file (rather than opening the folder) lands the file
+    // manager inside the batch folder with focus on its contents, so a
+    // Ctrl+A right away selects every map.
+    void revealItemInDir(batch.files[0] ?? batch.dir);
+  }, []);
+
+  const sendAllToSteamRhythia = useCallback(async () => {
+    const loaded = entriesRef.current.filter(
+      (e) => e.preview && (e.status === "ready" || e.status === "done"),
+    );
+    if (loaded.length === 0) {
+      toast.info(t("toast.steamImportEmpty"));
+      return;
+    }
+
+    setIsPreparingSteamImport(true);
+    try {
+      const batch = await prepareSteamImport(
+        loaded.map((e) => ({ path: e.path, overrides: e.overrides })),
+      );
+      if (batch.files.length > 0) openSteamImportFolder(batch);
+      setSteamImportBatch(batch);
+    } catch (err) {
+      toast.error(t("toast.steamImportFailed", { error: String(err) }));
+    } finally {
+      setIsPreparingSteamImport(false);
+    }
+  }, [openSteamImportFolder, t]);
 
   const convertEntries = useCallback(
     async (targets: QueueEntry[]) => {
@@ -658,6 +709,9 @@ export default function App() {
 
   const pendingCount = entries.filter((e) => e.status === "ready" || e.status === "error").length;
   const doneCount = entries.filter((e) => e.status === "done").length;
+  const steamSendableCount = entries.filter(
+    (e) => e.preview && (e.status === "ready" || e.status === "done"),
+  ).length;
 
   return (
     <div className="relative flex h-screen flex-col bg-[rgb(var(--bg))] text-[rgb(var(--ink))]">
@@ -920,6 +974,22 @@ export default function App() {
                 {t("footer.batchEdit")}
               </button>
             )}
+            {hasSteamRhythia && steamSendableCount > 0 && (
+              <button
+                type="button"
+                onClick={() => void sendAllToSteamRhythia()}
+                disabled={isPreparingSteamImport || isConverting}
+                title={t("steamImport.button.tooltip")}
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-[rgb(var(--ink)/0.7)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink))] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isPreparingSteamImport ? (
+                  <IconSpinner className="h-4 w-4" />
+                ) : (
+                  <IconGamepad className="h-4 w-4" />
+                )}
+                {isPreparingSteamImport ? t("steamImport.loading") : t("steamImport.button")}
+              </button>
+            )}
             {doneCount > 0 && (
               <button
                 type="button"
@@ -990,6 +1060,14 @@ export default function App() {
           game={pickerGame}
           onImport={(paths) => void addPaths(paths)}
           onClose={() => setPickerGame(null)}
+        />
+      )}
+
+      {steamImportBatch && (
+        <SteamImportPanel
+          batch={steamImportBatch}
+          onOpenFolder={() => openSteamImportFolder(steamImportBatch)}
+          onClose={() => setSteamImportBatch(null)}
         />
       )}
 

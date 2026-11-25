@@ -40,6 +40,9 @@ pub enum ConvertError {
 
     #[error("failed to parse {0} inside .npk: {1}")]
     InvalidNpkJson(&'static str, serde_json::Error),
+
+    #[error("{0}")]
+    InvalidCapoCache(String),
 }
 
 pub type Result<T> = std::result::Result<T, ConvertError>;

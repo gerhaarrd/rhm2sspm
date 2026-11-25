@@ -124,3 +124,10 @@ export interface PersistedQueueEntry {
   targetFormat: MapFormat;
   pinned: boolean;
 }
+
+export interface SteamImportBatch {
+  /** Folder holding only this batch's `.rhm` files. */
+  dir: string;
+  files: string[];
+  failures: { path: string; error: string }[];
+}
