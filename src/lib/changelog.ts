@@ -3,6 +3,11 @@
  * auto-update finishes and relaunches). Add an entry here when cutting
  * a new release; versions without one just skip the popup silently. */
 export const CHANGELOG: Record<string, { pt: string[]; en: string[]; es: string[] }> = {
+  "0.1.4": {
+    pt: ["Corrigido: a lista de mapas instalados não abria se um único .sspm tivesse um campo de metadados vazio"],
+    en: ["Fixed: the installed-maps list wouldn't open if a single .sspm had an empty metadata field"],
+    es: ["Corregido: la lista de mapas instalados no se abría si un solo .sspm tenía un campo de metadatos vacío"],
+  },
   "0.1.3": {
     pt: [
       "Envia a fila inteira pro Rhythia da Steam de uma vez: converte tudo pra .rhm numa pasta pronta pra arrastar pro jogo",
