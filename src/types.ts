@@ -124,3 +124,11 @@ export interface PersistedQueueEntry {
   targetFormat: MapFormat;
   pinned: boolean;
 }
+
+export interface MapBatch {
+  /** Folder the batch was written to: a fresh one holding only this
+   * batch for Steam Rhythia, or the game's own library for Chromia. */
+  dir: string;
+  files: string[];
+  failures: { path: string; error: string }[];
+}

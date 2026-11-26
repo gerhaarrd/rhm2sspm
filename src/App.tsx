@@ -5,14 +5,17 @@ import { getVersion } from "@tauri-apps/api/app";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   convertMapFile,
+  detectInstalledGames,
   exportZip,
   extractZipMaps,
   getBuildInfo,
   getLaunchFiles,
+  installToChromia,
   pickMapFiles,
   pickOutputFolder,
   pickZipDestination,
   pickZipToImport,
+  prepareSteamImport,
   previewMap,
   resolveMapPaths,
 } from "./lib/backend";
@@ -52,6 +55,7 @@ import { QueueItem } from "./components/QueueItem";
 import { QueueItemGrid } from "./components/QueueItemGrid";
 import { QueueToolbar, type SortKey, type ViewMode } from "./components/QueueToolbar";
 import { SessionStats } from "./components/SessionStats";
+import { BatchSendPanel, type BatchTarget } from "./components/BatchSendPanel";
 import { Toaster } from "./components/Toaster";
 import {
   IconArchive,
@@ -72,7 +76,14 @@ import {
   IconSun,
   IconUpload,
 } from "./components/Icons";
-import type { DetectedGame, HistoryEntry, MapFormat, MetadataOverrides, QueueEntry } from "./types";
+import type {
+  DetectedGame,
+  HistoryEntry,
+  MapFormat,
+  MetadataOverrides,
+  MapBatch,
+  QueueEntry,
+} from "./types";
 
 const THEME_CYCLE: ThemeMode[] = ["dark", "light", "system"];
 const THEME_ICON: Record<ThemeMode, typeof IconSun> = {
@@ -124,6 +135,12 @@ export default function App() {
   const [buildInfo, setBuildInfo] = useState<{ version: string; commit: string } | null>(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [hasSteamRhythia, setHasSteamRhythia] = useState(false);
+  const [hasChromia, setHasChromia] = useState(false);
+  const [sendingTo, setSendingTo] = useState<BatchTarget | null>(null);
+  const [sentBatch, setSentBatch] = useState<{ target: BatchTarget; batch: MapBatch } | null>(
+    null,
+  );
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
 
@@ -332,6 +349,15 @@ export default function App() {
     void getBuildInfo().then(setBuildInfo);
   }, []);
 
+  // Only offer "Send to ..." for games actually installed here --
+  // otherwise the buttons would just be noise.
+  useEffect(() => {
+    void detectInstalledGames().then((games) => {
+      setHasSteamRhythia(games.some((g) => g.source === "capo"));
+      setHasChromia(games.some((g) => g.name === "Chromia"));
+    });
+  }, []);
+
   // Show what's new once, if this launch is running a newer version than
   // last time (typically right after an auto-update relaunches) -- never
   // on a fresh install, since there's no "previous version" to compare.
@@ -464,6 +490,42 @@ export default function App() {
       setIsExporting(false);
     }
   }, [t, tn]);
+
+  const openBatchFolder = useCallback((batch: MapBatch) => {
+    // Revealing a file (rather than opening the folder) lands the file
+    // manager inside the batch folder with focus on its contents, so a
+    // Ctrl+A right away selects every map.
+    void revealItemInDir(batch.files[0] ?? batch.dir);
+  }, []);
+
+  const sendAllTo = useCallback(
+    async (target: BatchTarget) => {
+      const loaded = entriesRef.current.filter(
+        (e) => e.preview && (e.status === "ready" || e.status === "done"),
+      );
+      if (loaded.length === 0) {
+        toast.info(t("toast.steamImportEmpty"));
+        return;
+      }
+
+      const items = loaded.map((e) => ({ path: e.path, overrides: e.overrides }));
+      setSendingTo(target);
+      try {
+        const batch =
+          target === "steam" ? await prepareSteamImport(items) : await installToChromia(items);
+        // Steam needs the folder open for the drag; Chromia already has
+        // the maps, so its folder only opens on request.
+        if (target === "steam" && batch.files.length > 0) openBatchFolder(batch);
+        setSentBatch({ target, batch });
+      } catch (err) {
+        const key = target === "steam" ? "toast.steamImportFailed" : "toast.chromiaInstallFailed";
+        toast.error(t(key, { error: String(err) }));
+      } finally {
+        setSendingTo(null);
+      }
+    },
+    [openBatchFolder, t],
+  );
 
   const convertEntries = useCallback(
     async (targets: QueueEntry[]) => {
@@ -658,6 +720,9 @@ export default function App() {
 
   const pendingCount = entries.filter((e) => e.status === "ready" || e.status === "error").length;
   const doneCount = entries.filter((e) => e.status === "done").length;
+  const sendableCount = entries.filter(
+    (e) => e.preview && (e.status === "ready" || e.status === "done"),
+  ).length;
 
   return (
     <div className="relative flex h-screen flex-col bg-[rgb(var(--bg))] text-[rgb(var(--ink))]">
@@ -920,6 +985,38 @@ export default function App() {
                 {t("footer.batchEdit")}
               </button>
             )}
+            {hasSteamRhythia && sendableCount > 0 && (
+              <button
+                type="button"
+                onClick={() => void sendAllTo("steam")}
+                disabled={sendingTo !== null || isConverting}
+                title={t("steamImport.button.tooltip")}
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-[rgb(var(--ink)/0.7)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink))] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {sendingTo === "steam" ? (
+                  <IconSpinner className="h-4 w-4" />
+                ) : (
+                  <IconGamepad className="h-4 w-4" />
+                )}
+                {sendingTo === "steam" ? t("steamImport.loading") : t("steamImport.button")}
+              </button>
+            )}
+            {hasChromia && sendableCount > 0 && (
+              <button
+                type="button"
+                onClick={() => void sendAllTo("chromia")}
+                disabled={sendingTo !== null || isConverting}
+                title={t("chromiaInstall.button.tooltip")}
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-[rgb(var(--ink)/0.7)] ring-1 ring-[rgb(var(--ink)/0.1)] transition hover:bg-[rgb(var(--ink)/0.06)] hover:text-[rgb(var(--ink))] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {sendingTo === "chromia" ? (
+                  <IconSpinner className="h-4 w-4" />
+                ) : (
+                  <IconGamepad className="h-4 w-4" />
+                )}
+                {sendingTo === "chromia" ? t("chromiaInstall.loading") : t("chromiaInstall.button")}
+              </button>
+            )}
             {doneCount > 0 && (
               <button
                 type="button"
@@ -990,6 +1087,15 @@ export default function App() {
           game={pickerGame}
           onImport={(paths) => void addPaths(paths)}
           onClose={() => setPickerGame(null)}
+        />
+      )}
+
+      {sentBatch && (
+        <BatchSendPanel
+          target={sentBatch.target}
+          batch={sentBatch.batch}
+          onOpenFolder={() => openBatchFolder(sentBatch.batch)}
+          onClose={() => setSentBatch(null)}
         />
       )}
 

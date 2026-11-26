@@ -552,6 +552,20 @@ fn get_build_info(app: tauri::AppHandle) -> BuildInfo {
     }
 }
 
+/// Chromia (a Godot fork of Sound Space+) loads every `.sspm` sitting in
+/// `user://maps`, i.e. `%APPDATA%\Chromia\maps` on Windows -- confirmed on
+/// a real install, where its map cache lists exactly those files (including
+/// `.sspm`s this app wrote). The Linux path follows Godot's usual
+/// `~/.local/share/<project>` convention and hasn't been checked.
+const CHROMIA_MAPS_SUBDIR: &str = "Chromia/maps";
+
+fn chromia_maps_dir() -> Option<PathBuf> {
+    game_map_dirs()
+        .into_iter()
+        .find(|(name, dir)| *name == "Chromia" && dir.is_dir())
+        .map(|(_, dir)| dir)
+}
+
 /// Roots under which each supported game keeps its own map library, one
 /// per platform this app targets. Confirmed against the real games on
 /// Linux; the Windows paths follow Godot's standard per-project
@@ -572,6 +586,7 @@ fn game_map_dirs() -> Vec<(&'static str, PathBuf)> {
     for root in &roots {
         candidates.push(("Rhythia", root.join("Rhythia/maps")));
         candidates.push(("Novastra", root.join("Novastra/charts")));
+        candidates.push(("Chromia", root.join(CHROMIA_MAPS_SUBDIR)));
     }
     candidates
 }
@@ -788,6 +803,207 @@ async fn import_capo_maps(ids: Vec<String>) -> Result<Vec<String>, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchItem {
+    path: String,
+    overrides: Option<MetadataOverrides>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchFailure {
+    path: String,
+    error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MapBatch {
+    /// Fresh folder holding nothing but this batch's `.rhm` files, so
+    /// "select all + drag into the game" picks up exactly this batch.
+    dir: String,
+    files: Vec<String>,
+    failures: Vec<BatchFailure>,
+}
+
+/// Converts many queued maps (any source format, with their UI edits
+/// applied) to `.rhm` in one go, ready to hand to the Steam ("Capo")
+/// build of Rhythia. `.rhm` is that client's own native format -- it's
+/// what its "Export map" writes (confirmed byte-for-byte against a real
+/// export: same `map`/`audio`/`cover` zip entries and PascalCase JSON),
+/// and it imports maps dropped onto its window. Its library itself is a
+/// hash-named cache indexed by its own SQLite database, which this app
+/// deliberately doesn't write to: the game may be running, and a
+/// hand-written row it didn't create could corrupt the library.
+///
+/// One failing map doesn't abort the rest -- it's reported in
+/// `failures` while everything else still gets written and verified.
+#[tauri::command]
+async fn prepare_steam_import(items: Vec<BatchItem>) -> Result<MapBatch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let out_dir = std::env::temp_dir()
+            .join("rhm2sspm-steam-import")
+            .join(stamp.to_string());
+        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+        Ok(write_batch(items, &out_dir, MapFormat::Rhm))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Installs many queued maps straight into Chromia's map library in one
+/// go, as `.sspm` (the only format it loads). Unlike the Steam client,
+/// that's just a folder the game scans, so dropping new files in is all
+/// an install takes -- it picks them up on its next map list refresh /
+/// restart. Existing files are never overwritten: a clash gets a
+/// ` (2)` suffix instead.
+#[tauri::command]
+async fn install_to_chromia(items: Vec<BatchItem>) -> Result<MapBatch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let maps_dir = chromia_maps_dir()
+            .ok_or_else(|| "Chromia is not installed on this machine".to_string())?;
+        Ok(write_batch(items, &maps_dir, MapFormat::Sspm))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Exports maps straight out of a detected game's library (ids from
+/// `list_capo_maps` for `source: "capo"`, or file paths from
+/// `list_folder_maps` for `"folder"`) into `dest_dir` as `format`, in
+/// one go -- no need to queue them first. Same per-map failure handling
+/// and no-overwrite naming as the send-to-game batches.
+#[tauri::command]
+async fn export_installed_maps(
+    source: String,
+    ids: Vec<String>,
+    format: MapFormat,
+    dest_dir: String,
+) -> Result<MapBatch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let out_dir = PathBuf::from(&dest_dir);
+        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+        let capo_dir =
+            if source == "capo" {
+                Some(rhmsspm_core::capo_data_dir().ok_or_else(|| {
+                    "Rhythia (Steam) is not installed on this machine".to_string()
+                })?)
+            } else {
+                None
+            };
+
+        let mut used_names = std::collections::HashSet::new();
+        let mut files = Vec::with_capacity(ids.len());
+        let mut failures = Vec::new();
+        for id in ids {
+            let result = read_installed_map(capo_dir.as_deref(), &id)
+                .and_then(|rhm| write_rhm_to_dir(rhm, &out_dir, format, &mut used_names));
+            match result {
+                Ok(path) => files.push(path.display().to_string()),
+                Err(error) => failures.push(BatchFailure { path: id, error }),
+            }
+        }
+        Ok(MapBatch {
+            dir: out_dir.display().to_string(),
+            files,
+            failures,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn read_installed_map(capo_dir: Option<&Path>, id: &str) -> Result<rhmsspm_core::rhm::Rhm, String> {
+    let path = Path::new(id);
+    match capo_dir {
+        Some(data_dir) => {
+            if !path.starts_with(data_dir.join("cache").join("maps")) {
+                return Err(format!("not a Capo map id: {id}"));
+            }
+            rhmsspm_core::capo::read_map(data_dir, path).map_err(|e| e.to_string())
+        }
+        None => {
+            let bytes = std::fs::read(path).map_err(|e| format!("failed to read {id}: {e}"))?;
+            rhmsspm_core::read_any(source_format(path), &bytes).map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Converts every item into `out_dir` as `format`, continuing past
+/// failures (each reported in `failures`) instead of aborting the batch.
+fn write_batch(items: Vec<BatchItem>, out_dir: &Path, format: MapFormat) -> MapBatch {
+    let mut used_names = std::collections::HashSet::new();
+    let mut files = Vec::with_capacity(items.len());
+    let mut failures = Vec::new();
+    for item in items {
+        match write_batch_file(&item, out_dir, format, &mut used_names) {
+            Ok(path) => files.push(path.display().to_string()),
+            Err(error) => failures.push(BatchFailure {
+                path: item.path,
+                error,
+            }),
+        }
+    }
+    MapBatch {
+        dir: out_dir.display().to_string(),
+        files,
+        failures,
+    }
+}
+
+fn write_batch_file(
+    item: &BatchItem,
+    out_dir: &Path,
+    format: MapFormat,
+    used_names: &mut std::collections::HashSet<String>,
+) -> Result<PathBuf, String> {
+    let input = Path::new(&item.path);
+    let bytes = std::fs::read(input).map_err(|e| format!("failed to read {}: {e}", item.path))?;
+    let mut rhm =
+        rhmsspm_core::read_any(source_format(input), &bytes).map_err(|e| e.to_string())?;
+    apply_overrides(&mut rhm.map, item.overrides.clone());
+    write_rhm_to_dir(rhm, out_dir, format, used_names)
+}
+
+/// Writes one already-decoded map into `out_dir` as `format`, named after
+/// its title, never clobbering an existing file, and verified on disk.
+fn write_rhm_to_dir(
+    rhm: rhmsspm_core::rhm::Rhm,
+    out_dir: &Path,
+    format: MapFormat,
+    used_names: &mut std::collections::HashSet<String>,
+) -> Result<PathBuf, String> {
+    let base_name = sanitize_file_name(&rhm.map.title);
+    let output = rhmsspm_core::write_any(format, rhm).map_err(|e| e.to_string())?;
+
+    // Never clobber a file already there (out_dir can be a game's live
+    // library) or one written earlier in this same batch.
+    let ext = format.ext();
+    let mut file_name = format!("{base_name}.{ext}");
+    let mut n = 2;
+    while out_dir.join(&file_name).exists() || !used_names.insert(file_name.to_lowercase()) {
+        file_name = format!("{base_name} ({n}).{ext}");
+        n += 1;
+    }
+    let out_path = out_dir.join(&file_name);
+    std::fs::write(&out_path, &output).map_err(|e| e.to_string())?;
+
+    // Same guarantee as convert_map_file: what's on disk must re-parse.
+    let written = std::fs::read(&out_path).map_err(|e| e.to_string())?;
+    if let Err(e) = rhmsspm_core::read_any(format, &written) {
+        let _ = std::fs::remove_file(&out_path);
+        return Err(format!("converted .{ext} failed to verify: {e}"));
+    }
+    Ok(out_path)
+}
+
 /// Replaces characters that are invalid (or awkward) in a file name on
 /// either Windows or Linux with `_`, so an arbitrary map title can be used
 /// directly as a file name.
@@ -975,8 +1191,124 @@ pub fn run() {
             list_folder_maps,
             get_capo_map_cover,
             import_capo_maps,
+            prepare_steam_import,
+            install_to_chromia,
+            export_installed_maps,
             compare_maps
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod steam_import_tests {
+    use super::*;
+
+    fn testdata(name: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata")
+            .join(name)
+            .display()
+            .to_string()
+    }
+
+    #[test]
+    fn converts_a_mixed_batch_to_rhm_and_keeps_going_past_a_bad_file() {
+        let out_dir =
+            std::env::temp_dir().join(format!("rhm2sspm-steam-import-test-{}", std::process::id()));
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let items = [
+            BatchItem {
+                path: testdata("Caramella Girls - Caramelldansen.rhm"),
+                overrides: Some(MetadataOverrides {
+                    title: Some("Renamed: in the UI?".to_string()),
+                    ..Default::default()
+                }),
+            },
+            BatchItem {
+                path: testdata("dampkr_goreshit_-_slavik_goblins.sspm"),
+                overrides: None,
+            },
+            BatchItem {
+                path: testdata("sdag_-_novastra_map__-_test.npk"),
+                overrides: None,
+            },
+            BatchItem {
+                path: testdata("does-not-exist.rhm"),
+                overrides: None,
+            },
+        ];
+
+        let mut used = std::collections::HashSet::new();
+        let results: Vec<_> = items
+            .iter()
+            .map(|item| write_batch_file(item, &out_dir, MapFormat::Rhm, &mut used))
+            .collect();
+
+        assert!(results[3].is_err());
+        let written: Vec<PathBuf> = results.into_iter().filter_map(Result::ok).collect();
+        assert_eq!(written.len(), 3);
+        for path in &written {
+            assert_eq!(path.extension().and_then(|e| e.to_str()), Some("rhm"));
+            let bytes = std::fs::read(path).unwrap();
+            rhmsspm_core::read_any(MapFormat::Rhm, &bytes).unwrap();
+        }
+
+        // UI edits are applied, and the title is made file-name safe.
+        let first =
+            rhmsspm_core::read_any(MapFormat::Rhm, &std::fs::read(&written[0]).unwrap()).unwrap();
+        assert_eq!(first.map.title, "Renamed: in the UI?");
+        assert_eq!(
+            written[0].file_name().unwrap().to_str().unwrap(),
+            "Renamed_ in the UI_.rhm"
+        );
+
+        // Two maps with the same title don't overwrite each other.
+        let again = write_batch_file(&items[0], &out_dir, MapFormat::Rhm, &mut used).unwrap();
+        assert_ne!(again, written[0]);
+
+        // A file already sitting in the target folder (e.g. a game's live
+        // library) is never overwritten, even across separate batches.
+        let mut fresh_batch = std::collections::HashSet::new();
+        let sspm =
+            write_batch_file(&items[1], &out_dir, MapFormat::Sspm, &mut fresh_batch).unwrap();
+        let sspm_again = write_batch_file(
+            &items[1],
+            &out_dir,
+            MapFormat::Sspm,
+            &mut std::collections::HashSet::new(),
+        )
+        .unwrap();
+        assert_ne!(sspm, sspm_again);
+        rhmsspm_core::read_any(MapFormat::Sspm, &std::fs::read(&sspm_again).unwrap()).unwrap();
+
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
+
+    #[test]
+    fn exports_installed_folder_maps_to_any_format() {
+        let out_dir = std::env::temp_dir().join(format!(
+            "rhm2sspm-export-installed-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let mut used = std::collections::HashSet::new();
+
+        for (name, format) in [
+            ("vmapimp_luminous_entities_lost_heart.sspm", MapFormat::Phxm),
+            ("Juice WRLD - Bad Boy ft. Young Thug.rhm", MapFormat::Npk),
+        ] {
+            let rhm = read_installed_map(None, &testdata(name)).unwrap();
+            let notes = rhm.map.notes.len();
+            let path = write_rhm_to_dir(rhm, &out_dir, format, &mut used).unwrap();
+            let back = rhmsspm_core::read_any(format, &std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(back.map.notes.len(), notes);
+        }
+
+        // A Capo id outside the client's cache folder is refused.
+        assert!(read_installed_map(Some(&out_dir), "/etc/passwd").is_err());
+
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
 }

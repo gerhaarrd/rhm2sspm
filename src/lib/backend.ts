@@ -9,6 +9,7 @@ import type {
   MapFormat,
   MapPreview,
   MetadataOverrides,
+  MapBatch,
 } from "../types";
 
 export function previewMap(path: string, targetFormat: MapFormat): Promise<MapPreview> {
@@ -128,4 +129,31 @@ export function listFolderMaps(dir: string): Promise<InstalledMapSummary[]> {
  * this out since generating it costs real I/O per map. */
 export function getCapoMapCover(id: string): Promise<string | null> {
   return invoke("get_capo_map_cover", { id });
+}
+
+/** Converts many queued maps (with their edits) to `.rhm` in one fresh
+ * folder, ready to drag into the Steam build of Rhythia all at once. */
+export function prepareSteamImport(
+  items: { path: string; overrides: MetadataOverrides | null }[],
+): Promise<MapBatch> {
+  return invoke("prepare_steam_import", { items });
+}
+
+/** Installs many queued maps (with their edits) straight into Chromia's
+ * map folder as `.sspm`, never overwriting what's already there. */
+export function installToChromia(
+  items: { path: string; overrides: MetadataOverrides | null }[],
+): Promise<MapBatch> {
+  return invoke("install_to_chromia", { items });
+}
+
+/** Exports maps straight out of a detected game's library (ids from
+ * listCapoMaps / listFolderMaps) into `destDir` as `format`, in one go. */
+export function exportInstalledMaps(
+  source: "capo" | "folder",
+  ids: string[],
+  format: MapFormat,
+  destDir: string,
+): Promise<MapBatch> {
+  return invoke("export_installed_maps", { source, ids, format, destDir });
 }

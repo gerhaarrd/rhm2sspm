@@ -10,11 +10,81 @@
 //! install: `~/.config/CapoRhythia/rhythia.db`'s `Maps` table rows match
 //! `cache/maps/*.json` 1:1, so the JSON files alone are enough -- no need
 //! to touch the SQLite database.
+//!
+//! Newer builds of the client replaced those `.json` files with binary
+//! `cache/maps/<sha256>.rhc` files (confirmed against a real Windows
+//! install, Nov 2026): an `RHYCACHE` magic, a small little-endian header,
+//! the same JSON object minus its `Notes` array, then every note packed
+//! as `(i32 time_ms, f32 x, f32 y)`. Both layouts are read here, since an
+//! install that hasn't been updated yet still has the old one.
 
 use std::path::{Path, PathBuf};
 
-use crate::error::Result;
-use crate::rhm::{Rhm, RhmMap};
+use crate::error::{ConvertError, Result};
+use crate::rhm::{Rhm, RhmMap, RhmNote};
+
+const RHC_MAGIC: &[u8; 8] = b"RHYCACHE";
+/// magic (8) + version, json length, note count, note bytes (4 x u32).
+const RHC_HEADER_LEN: usize = 24;
+const RHC_NOTE_LEN: usize = 12;
+
+fn is_cached_map_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("json") | Some("rhc")
+    )
+}
+
+fn read_u32(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+}
+
+/// Decodes one cached map file, in either the legacy plain-JSON layout or
+/// the binary `.rhc` one (see the module docs).
+pub fn parse_cached_map(bytes: &[u8]) -> Result<RhmMap> {
+    if !bytes.starts_with(RHC_MAGIC) {
+        return Ok(serde_json::from_slice(bytes)?);
+    }
+    let bad =
+        |why: &str| ConvertError::InvalidCapoCache(format!("not a valid .rhc cache file: {why}"));
+    if bytes.len() < RHC_HEADER_LEN {
+        return Err(bad("truncated header"));
+    }
+    let version = read_u32(bytes, 8);
+    if version != 1 {
+        return Err(bad(&format!("unsupported version {version}")));
+    }
+    let json_len = read_u32(bytes, 12) as usize;
+    let note_count = read_u32(bytes, 16) as usize;
+    let notes_len = read_u32(bytes, 20) as usize;
+    if notes_len != note_count * RHC_NOTE_LEN {
+        return Err(bad("note block size doesn't match the note count"));
+    }
+    let json_end = RHC_HEADER_LEN + json_len;
+    if bytes.len() < json_end + notes_len {
+        return Err(bad("truncated body"));
+    }
+
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes[RHC_HEADER_LEN..json_end])?;
+    if let Some(obj) = value.as_object_mut() {
+        // The note list lives in the binary block below, not the JSON.
+        obj.entry("Notes")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    }
+    let mut map: RhmMap = serde_json::from_value(value)?;
+
+    map.notes = bytes[json_end..json_end + notes_len]
+        .as_chunks::<RHC_NOTE_LEN>()
+        .0
+        .iter()
+        .map(|c| RhmNote {
+            time: i64::from(i32::from_le_bytes(c[0..4].try_into().unwrap())),
+            x: f32::from_le_bytes(c[4..8].try_into().unwrap()),
+            y: f32::from_le_bytes(c[8..12].try_into().unwrap()),
+        })
+        .collect();
+    Ok(map)
+}
 
 /// One map found in the Capo client's local cache. Listing this is cheap
 /// (JSON parse only, no audio/cover I/O) -- it's meant for a picker the
@@ -60,13 +130,13 @@ pub fn list_maps(data_dir: &Path) -> Result<Vec<CapoMapEntry>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(&maps_dir)? {
         let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        if !is_cached_map_file(&path) {
             continue;
         }
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        let Ok(map) = serde_json::from_slice::<RhmMap>(&bytes) else {
+        let Ok(map) = parse_cached_map(&bytes) else {
             continue;
         };
         out.push(CapoMapEntry {
@@ -90,7 +160,7 @@ pub fn list_maps(data_dir: &Path) -> Result<Vec<CapoMapEntry>> {
 /// Capo's internal cache paths into whatever this gets converted to.
 pub fn read_map(data_dir: &Path, json_path: &Path) -> Result<Rhm> {
     let bytes = std::fs::read(json_path)?;
-    let mut map: RhmMap = serde_json::from_slice(&bytes)?;
+    let mut map = parse_cached_map(&bytes)?;
 
     let audio = resolve_blob(data_dir, &map.audio_file_name);
     let cover = map
@@ -114,7 +184,7 @@ pub fn read_map(data_dir: &Path, json_path: &Path) -> Result<Rhm> {
 /// without paying for a multi-MB audio read per row.
 pub fn read_cover(data_dir: &Path, json_path: &Path) -> Result<Vec<u8>> {
     let bytes = std::fs::read(json_path)?;
-    let map: RhmMap = serde_json::from_slice(&bytes)?;
+    let map = parse_cached_map(&bytes)?;
     Ok(map
         .image_path
         .as_deref()
@@ -195,6 +265,62 @@ mod tests {
         // read_cover gets the same bytes without touching the audio file.
         let cover = read_cover(&dir.0, &entries[0].json_path).unwrap();
         assert_eq!(cover, b"fake-jpeg-bytes");
+    }
+
+    /// Same shape as a real `.rhc` from a current Windows install: header,
+    /// JSON without `Notes`, then packed `(i32, f32, f32)` notes.
+    fn fake_rhc(json: &str, notes: &[(i32, f32, f32)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RHYCACHE");
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(notes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&((notes.len() * 12) as u32).to_le_bytes());
+        out.extend_from_slice(json.as_bytes());
+        for (t, x, y) in notes {
+            out.extend_from_slice(&t.to_le_bytes());
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn lists_and_reads_a_binary_rhc_cached_map() {
+        let dir = FakeCapoDir::new();
+        std::fs::write(dir.0.join("cache/audio/songhash"), b"fake-mp3-bytes").unwrap();
+        let rhc = fake_rhc(
+            r#"{"OnlineId":12860,"OnlineStatus":"RANKED","LegacyId":"x","SongName":"Turbo",
+                "Mappers":["someone"],"Title":"Turbo - PADORU","IsExplicit":false,
+                "Duration":31640,"Difficulty":4,"CustomDifficultyName":"Gift",
+                "StarRating":3.96,"AudioFileName":"/cache/audio/songhash",
+                "ImagePath":null,"AudioTimingMode":"SsqeBass"}"#,
+            &[(1008, 0.0, 2.0), (1324, 0.0, 2.0), (1640, 0.5, 1.25)],
+        );
+        std::fs::write(dir.0.join("cache/maps/abc.rhc"), &rhc).unwrap();
+
+        let entries = list_maps(&dir.0).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Turbo - PADORU");
+        assert_eq!(entries[0].note_count, 3);
+
+        let rhm = read_map(&dir.0, &entries[0].json_path).unwrap();
+        assert_eq!(rhm.audio, b"fake-mp3-bytes");
+        assert_eq!(rhm.map.notes[0].time, 1008);
+        assert_eq!(rhm.map.notes[2].x, 0.5);
+        assert_eq!(rhm.map.notes[2].y, 1.25);
+
+        // And it survives a round trip through a real .rhm.
+        let bytes = crate::rhm::write(&rhm).unwrap();
+        let back = crate::rhm::read(&bytes).unwrap();
+        assert_eq!(back.map.notes.len(), 3);
+    }
+
+    #[test]
+    fn rejects_an_rhc_whose_note_block_is_truncated() {
+        let mut rhc = fake_rhc(r#"{"Duration":1,"Difficulty":0}"#, &[(1, 0.0, 0.0)]);
+        rhc.truncate(rhc.len() - 4);
+        assert!(parse_cached_map(&rhc).is_err());
     }
 
     #[test]
