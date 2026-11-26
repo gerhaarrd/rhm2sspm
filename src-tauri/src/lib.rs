@@ -729,10 +729,14 @@ async fn list_folder_maps(dir: String) -> Result<Vec<InstalledMapSummary>, Strin
         let mut out = Vec::new();
         for path_str in resolve_map_paths(vec![dir]) {
             let path = Path::new(&path_str);
-            let bytes =
-                std::fs::read(path).map_err(|e| format!("failed to read {path_str}: {e}"))?;
-            let rhm =
-                rhmsspm_core::read_any(source_format(path), &bytes).map_err(|e| e.to_string())?;
+            // One unreadable file (corrupt, or a format variant this app
+            // doesn't know yet) must not hide the rest of the library.
+            let Ok(bytes) = std::fs::read(path) else {
+                continue;
+            };
+            let Ok(rhm) = rhmsspm_core::read_any(source_format(path), &bytes) else {
+                continue;
+            };
             let cover_data_url = thumbnail_data_url(&rhm.cover);
             out.push(InstalledMapSummary {
                 id: path_str,

@@ -41,6 +41,9 @@ use crate::error::{ConvertError, Result};
 pub const MAGIC: [u8; 4] = *b"SS+m";
 pub const VERSION: u16 = 2;
 
+/// A field with no value at all (no payload bytes). Real Sound Space+ /
+/// Chromia maps use it; it isn't in older write-ups of the format.
+pub const TYPE_NULL: u8 = 0x00;
 pub const TYPE_INT8: u8 = 0x01;
 pub const TYPE_UINT16: u8 = 0x02;
 pub const TYPE_UINT32: u8 = 0x03;
@@ -311,11 +314,21 @@ pub struct ParsedSspm {
 /// Walks a custom-data block just far enough to collect string-valued
 /// fields by name; every other value type is read and discarded so the
 /// cursor stays aligned for the next field.
-fn read_custom_strings(bytes: &[u8], offset: u64, len: u64) -> Result<HashMap<String, String>> {
+///
+/// Best-effort: custom data is optional metadata (difficulty name, this
+/// tool's own extras), so a field this reader doesn't understand stops
+/// the walk and keeps whatever was collected before it, instead of
+/// rejecting an otherwise perfectly playable map.
+fn read_custom_strings(bytes: &[u8], offset: u64, len: u64) -> HashMap<String, String> {
     let mut out = HashMap::new();
     if len < 2 {
-        return Ok(out);
+        return out;
     }
+    let _ = walk_custom_fields(bytes, offset, &mut out);
+    out
+}
+
+fn walk_custom_fields(bytes: &[u8], offset: u64, out: &mut HashMap<String, String>) -> Result<()> {
     let mut r = Cursor::new(bytes);
     r.set_position(offset);
     let field_count = r.read_u16::<LittleEndian>()?;
@@ -328,9 +341,9 @@ fn read_custom_strings(bytes: &[u8], offset: u64, len: u64) -> Result<HashMap<St
         } else {
             None
         };
-        skip_or_capture_value(&mut r, type_id, array_type, &name, &mut out)?;
+        skip_or_capture_value(&mut r, type_id, array_type, &name, out)?;
     }
-    Ok(out)
+    Ok(())
 }
 
 fn skip_or_capture_value(
@@ -341,6 +354,7 @@ fn skip_or_capture_value(
     out: &mut HashMap<String, String>,
 ) -> Result<()> {
     match type_id {
+        TYPE_NULL => {}
         TYPE_INT8 => {
             r.read_i8()?;
         }
@@ -501,7 +515,7 @@ pub fn read(bytes: &[u8]) -> Result<ParsedSspm> {
         hasher.finalize().into()
     };
 
-    let custom_strings = read_custom_strings(bytes, custom_off, custom_len)?;
+    let custom_strings = read_custom_strings(bytes, custom_off, custom_len);
 
     Ok(ParsedSspm {
         map_id,
@@ -518,4 +532,53 @@ pub fn read(bytes: &[u8]) -> Result<ParsedSspm> {
         computed_hash,
         custom_strings,
     })
+}
+
+#[cfg(test)]
+mod custom_data_tests {
+    use super::*;
+
+    fn field(out: &mut Vec<u8>, name: &str, type_id: u8, payload: &[u8]) {
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.push(type_id);
+        out.extend_from_slice(payload);
+    }
+
+    fn string_payload(s: &str) -> Vec<u8> {
+        let mut p = (s.len() as u16).to_le_bytes().to_vec();
+        p.extend_from_slice(s.as_bytes());
+        p
+    }
+
+    #[test]
+    fn null_typed_fields_are_skipped_not_rejected() {
+        let mut block = 3u16.to_le_bytes().to_vec();
+        field(&mut block, "empty", TYPE_NULL, &[]);
+        field(
+            &mut block,
+            "difficulty_name",
+            TYPE_STRING,
+            &string_payload("Hard"),
+        );
+        field(&mut block, "also_empty", TYPE_NULL, &[]);
+
+        let out = read_custom_strings(&block, 0, block.len() as u64);
+        assert_eq!(out.get("difficulty_name").map(String::as_str), Some("Hard"));
+    }
+
+    #[test]
+    fn an_unknown_type_keeps_what_was_read_before_it() {
+        let mut block = 2u16.to_le_bytes().to_vec();
+        field(
+            &mut block,
+            "difficulty_name",
+            TYPE_STRING,
+            &string_payload("Hard"),
+        );
+        field(&mut block, "mystery", 0xEE, &[1, 2, 3]);
+
+        let out = read_custom_strings(&block, 0, block.len() as u64);
+        assert_eq!(out.get("difficulty_name").map(String::as_str), Some("Hard"));
+    }
 }
