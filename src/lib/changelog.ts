@@ -3,6 +3,26 @@
  * auto-update finishes and relaunches). Add an entry here when cutting
  * a new release; versions without one just skip the popup silently. */
 export const CHANGELOG: Record<string, { pt: string[]; en: string[]; es: string[] }> = {
+  "0.1.3": {
+    pt: [
+      "Envia a fila inteira pro Rhythia da Steam de uma vez: converte tudo pra .rhm numa pasta pronta pra arrastar pro jogo",
+      "Integração com o Chromia: detecta o jogo, mostra os mapas dele e instala a fila inteira direto na pasta de mapas",
+      "Exporta mapas já instalados (Rhythia, Steam, Nova, Chromia) direto pra uma pasta, em qualquer formato",
+      "Corrigido: os mapas do Rhythia da Steam não apareciam mais depois que o jogo mudou o formato do cache",
+    ],
+    en: [
+      "Send the whole queue to Rhythia on Steam at once: everything is converted to .rhm in a folder ready to drag into the game",
+      "Chromia integration: detects the game, lists its maps and installs the whole queue straight into its maps folder",
+      "Export already-installed maps (Rhythia, Steam, Nova, Chromia) straight to a folder, in any format",
+      "Fixed: Rhythia (Steam) maps stopped showing up after the game changed its cache format",
+    ],
+    es: [
+      "Envía toda la cola a Rhythia de Steam de una vez: todo se convierte a .rhm en una carpeta lista para arrastrar al juego",
+      "Integración con Chromia: detecta el juego, muestra sus mapas e instala toda la cola directamente en su carpeta de mapas",
+      "Exporta mapas ya instalados (Rhythia, Steam, Nova, Chromia) directamente a una carpeta, en cualquier formato",
+      "Corregido: los mapas de Rhythia (Steam) dejaron de aparecer después de que el juego cambió el formato de su caché",
+    ],
+  },
   "0.1.2": {
     pt: [
       "Detecta o Rhythia instalado via Steam e deixa escolher quais mapas importar, com capa e prévia",
